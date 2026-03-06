@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://demod.ltd/schemas/dcf-config.schema.json",
+  "title": "DCF Configuration",
+  "description": "DeMoD Communications Framework node configuration schema (v5.0.0)",
+  "type": "object",
+  "required": ["node_id", "mode", "plugins"],
+  "additionalProperties": false,
+  "properties": {
+    "node_id": {
+      "type": "string",
+      "description": "Unique identifier for this node",
+      "minLength": 1
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["client", "server", "p2p", "auto"],
+      "description": "Operating mode. 'auto' defers role to master node."
+    },
+    "listen_addr": {
+      "type": "string",
+      "description": "Bind address (e.g. '0.0.0.0:9000'). Required for server/p2p/auto.",
+      "default": "0.0.0.0:9000"
+    },
+    "master_addr": {
+      "type": "string",
+      "description": "Master node gRPC address. Required when mode=auto."
+    },
+    "peers": {
+      "type": "array",
+      "description": "Known peer addresses for P2P bootstrapping.",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Plugin configuration. transport is required; hardware plugins are optional.",
+      "required": ["transport"],
+      "additionalProperties": false,
+      "properties": {
+        "transport": {
+          "type": "string",
+          "description": "Path to transport plugin shared library (e.g. 'libcustom_transport.so')."
+        },
+        "hardware": {
+          "type": "object",
+          "description": "Map of hardware plugin ID -> shared library path.",
+          "additionalProperties": { "type": "string" },
+          "examples": [
+            { "i2c_sensor": "libi2c_sensor.so", "usb_device": "libusb_device.so" }
+          ]
+        }
+      }
+    },
+    "transport_params": {
+      "type": "object",
+      "description": "Freeform JSON parameters passed to the transport plugin at setup.",
+      "additionalProperties": true
+    },
+    "hardware_params": {
+      "type": "object",
+      "description": "Per-hardware-plugin JSON parameters, keyed by hardware plugin ID.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 1000,
+      "default": 5000,
+      "description": "Default operation timeout in milliseconds."
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 3,
+      "description": "Default send retry count."
+    },
+    "rtt_group_threshold_ms": {
+      "type": "number",
+      "minimum": 1,
+      "default": 50,
+      "description": "RTT threshold in ms for clustering peers into the same group."
+    },
+    "redundancy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "reroute_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Seconds to detect failure and complete reroute."
+        },
+        "max_hops": { "type": "integer", "minimum": 1, "default": 8 }
+      }
+    },
+    "grpc": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "max_message_size_bytes": { "type": "integer", "minimum": 1024 }
+      }
+    },
+    "log_level": {
+      "type": "string",
+      "enum": ["trace", "debug", "info", "warn", "error"],
+      "default": "info"
+    }
+  },
+  "if": { "properties": { "mode": { "const": "auto" } } },
+  "then": { "required": ["master_addr"] }
+}

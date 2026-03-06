@@ -1,0 +1,88 @@
+cabal-version:      3.4
+name:               dcf-faust-sdr
+version:            0.2.0.0
+synopsis:           DeMoD Faust-SDR Haskell TX pipeline
+description:
+  Haskell layer for the DeMoD Faust-SDR system.
+  Owns: 17-byte transport frame (CRC-CCITT), BPSK symbol encoding,
+  and the top-level TX pipeline. Delegates DSP compute to Faust via
+  C FFI and IQ output to SoapySDR via C FFI.
+license:            GPL-3.0-only
+author:             DeMoD LLC
+maintainer:         info@demod.ltd
+category:           Hardware, DSP, Network
+build-type:         Simple
+
+common opts
+  default-language: GHC2021
+  ghc-options:
+    -Wall
+    -Wunused-imports
+    -Wunused-matches
+    -O2
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+
+-- ── Library ───────────────────────────────────────────────────────────────────
+
+library
+  import:           opts
+  hs-source-dirs:   src
+
+  exposed-modules:
+    DCF.Faust.FFI
+    DCF.Faust.DSP
+    DCF.SDR.SoapyFFI
+    DCF.SDR.Device
+    DCF.Transport.Frame
+    DCF.Transport.Symbol
+    DCF.Modulator
+
+  c-sources:
+    cbits/faust_bridge.cpp
+    cbits/soapy_bridge.cpp
+
+  include-dirs:   cbits
+
+  extra-libraries:
+    stdc++
+    SoapySDR
+    m
+
+  pkgconfig-depends: SoapySDR
+
+  build-depends:
+      base              >= 4.17 && < 5
+    , binary            >= 0.8
+    , bytestring        >= 0.11
+    , vector            >= 0.13
+    , time              >= 1.12
+
+-- ── Executable ────────────────────────────────────────────────────────────────
+
+executable demod-sdr-hs
+  import:         opts
+  main-is:        Main.hs
+  hs-source-dirs: app
+
+  build-depends:
+      base
+    , dcf-faust-sdr
+
+-- ── Test suite ────────────────────────────────────────────────────────────────
+
+test-suite frame-tests
+  import:           opts
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  other-modules:    FrameSpec
+
+  build-depends:
+      base
+    , dcf-faust-sdr
+    , bytestring       >= 0.11
+    , vector           >= 0.13
+    , hspec            >= 2.11
+    , QuickCheck       >= 2.14
