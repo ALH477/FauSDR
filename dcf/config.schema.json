@@ -1,116 +1,210 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://demod.ltd/schemas/dcf-config.schema.json",
-  "title": "DCF Configuration",
-  "description": "DeMoD Communications Framework node configuration schema (v5.0.0)",
+  "title": "AudioNet Configuration Schema",
+  "description": "Configuration schema for AudioNet modern dial-up style modulator system",
   "type": "object",
-  "required": ["node_id", "mode", "plugins"],
-  "additionalProperties": false,
   "properties": {
-    "node_id": {
+    "modulator_type": {
+      "description": "Type of modulator to use",
       "type": "string",
-      "description": "Unique identifier for this node",
-      "minLength": 1
+      "enum": ["audionet", "audionet_mono", "audionet_stereo", "audionet_legacy", "high_speed"],
+      "default": "audionet"
     },
-    "mode": {
+    "audio_mode": {
+      "description": "Audio hardware configuration",
       "type": "string",
-      "enum": ["client", "server", "p2p", "auto"],
-      "description": "Operating mode. 'auto' defers role to master node."
+      "enum": ["mono", "stereo"],
+      "default": "stereo"
     },
-    "listen_addr": {
-      "type": "string",
-      "description": "Bind address (e.g. '0.0.0.0:9000'). Required for server/p2p/auto.",
-      "default": "0.0.0.0:9000"
-    },
-    "master_addr": {
-      "type": "string",
-      "description": "Master node gRPC address. Required when mode=auto."
-    },
-    "peers": {
-      "type": "array",
-      "description": "Known peer addresses for P2P bootstrapping.",
-      "items": { "type": "string" },
-      "default": []
-    },
-    "plugins": {
-      "type": "object",
-      "description": "Plugin configuration. transport is required; hardware plugins are optional.",
-      "required": ["transport"],
-      "additionalProperties": false,
-      "properties": {
-        "transport": {
-          "type": "string",
-          "description": "Path to transport plugin shared library (e.g. 'libcustom_transport.so')."
-        },
-        "hardware": {
-          "type": "object",
-          "description": "Map of hardware plugin ID -> shared library path.",
-          "additionalProperties": { "type": "string" },
-          "examples": [
-            { "i2c_sensor": "libi2c_sensor.so", "usb_device": "libusb_device.so" }
-          ]
-        }
-      }
-    },
-    "transport_params": {
-      "type": "object",
-      "description": "Freeform JSON parameters passed to the transport plugin at setup.",
-      "additionalProperties": true
-    },
-    "hardware_params": {
-      "type": "object",
-      "description": "Per-hardware-plugin JSON parameters, keyed by hardware plugin ID.",
-      "additionalProperties": {
-        "type": "object",
-        "additionalProperties": true
-      }
-    },
-    "timeout_ms": {
+    "sample_rate": {
+      "description": "Audio sample rate in Hz",
       "type": "integer",
-      "minimum": 1000,
-      "default": 5000,
-      "description": "Default operation timeout in milliseconds."
+      "enum": [44100, 48000, 96000, 192000],
+      "default": 48000
     },
-    "retries": {
-      "type": "integer",
-      "minimum": 0,
-      "default": 3,
-      "description": "Default send retry count."
-    },
-    "rtt_group_threshold_ms": {
-      "type": "number",
-      "minimum": 1,
-      "default": 50,
-      "description": "RTT threshold in ms for clustering peers into the same group."
-    },
-    "redundancy": {
+    "carrier_frequency": {
+      "description": "Carrier frequency configuration",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean", "default": true },
-        "reroute_timeout_s": {
+        "primary": {
+          "description": "Primary carrier frequency for left channel",
           "type": "integer",
-          "minimum": 1,
-          "default": 10,
-          "description": "Seconds to detect failure and complete reroute."
+          "minimum": 1000,
+          "maximum": 4000,
+          "default": 2200
         },
-        "max_hops": { "type": "integer", "minimum": 1, "default": 8 }
-      }
+        "secondary": {
+          "description": "Secondary carrier frequency for right channel (stereo mode)",
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 4000,
+          "default": 2600
+        },
+        "offset": {
+          "description": "Frequency offset between channels in stereo mode",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000,
+          "default": 400
+        }
+      },
+      "required": ["primary"]
     },
-    "grpc": {
+    "symbol_rate": {
+      "description": "Symbol rate configuration",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
-        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "max_message_size_bytes": { "type": "integer", "minimum": 1024 }
-      }
+        "primary": {
+          "description": "Primary symbol rate for left channel",
+          "type": "integer",
+          "minimum": 1200,
+          "maximum": 38400,
+          "default": 9600
+        },
+        "secondary": {
+          "description": "Secondary symbol rate for right channel (stereo mode)",
+          "type": "integer",
+          "minimum": 1200,
+          "maximum": 38400,
+          "default": 4800
+        }
+      },
+      "required": ["primary"]
     },
-    "log_level": {
+    "modulation": {
+      "description": "Modulation parameters",
+      "type": "object",
+      "properties": {
+        "modulation_index": {
+          "description": "Modulation index for sound character",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6.28318,
+          "default": 3.14159
+        },
+        "rrc_rolloff": {
+          "description": "RRC filter rolloff factor",
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 0.9,
+          "default": 0.35
+        },
+        "output_gain": {
+          "description": "Output gain control",
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "default": 0.8
+        }
+      },
+      "required": ["modulation_index", "rrc_rolloff", "output_gain"]
+    },
+    "stereo_config": {
+      "description": "Stereo-specific configuration",
+      "type": "object",
+      "properties": {
+        "independent_channels": {
+          "description": "Enable independent channel configuration",
+          "type": "boolean",
+          "default": true
+        },
+        "channel_linking": {
+          "description": "Link right channel to left with offset when disabled",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": ["independent_channels"]
+    },
+    "sound_profile": {
+      "description": "Predefined sound profiles for nostalgic experience",
       "type": "string",
-      "enum": ["trace", "debug", "info", "warn", "error"],
-      "default": "info"
+      "enum": ["deep_bbs", "classic_modem", "high_speed", "ultra_clear"],
+      "default": "classic_modem"
+    },
+    "connection_simulation": {
+      "description": "Dial-up connection state simulation",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable connection state simulation",
+          "type": "boolean",
+          "default": false
+        },
+        "connection_state": {
+          "description": "Current connection state",
+          "type": "string",
+          "enum": ["idle", "dialing", "handshake", "connected", "disconnecting"],
+          "default": "idle"
+        }
+      },
+      "required": ["enabled"]
+    },
+    "audio_quality": {
+      "description": "Audio quality preset",
+      "type": "string",
+      "enum": ["standard", "high", "studio"],
+      "default": "high"
+    },
+    "transport": {
+      "description": "Transport layer configuration",
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "description": "Transport protocol",
+          "type": "string",
+          "enum": ["udp", "tcp", "serial", "bluetooth"],
+          "default": "udp"
+        },
+        "port": {
+          "description": "Network port for UDP/TCP",
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535,
+          "default": 8888
+        },
+        "device": {
+          "description": "Serial device path",
+          "type": "string",
+          "default": "/dev/ttyUSB0"
+        }
+      },
+      "required": ["protocol"]
+    },
+    "performance": {
+      "description": "Performance tuning parameters",
+      "type": "object",
+      "properties": {
+        "buffer_size": {
+          "description": "Audio buffer size in samples",
+          "type": "integer",
+          "enum": [64, 128, 256, 512, 1024, 2048],
+          "default": 512
+        },
+        "latency_mode": {
+          "description": "Latency optimization mode",
+          "type": "string",
+          "enum": ["low", "balanced", "high"],
+          "default": "balanced"
+        },
+        "cpu_priority": {
+          "description": "CPU priority for audio processing",
+          "type": "string",
+          "enum": ["low", "normal", "high", "realtime"],
+          "default": "normal"
+        }
+      },
+      "required": ["buffer_size", "latency_mode"]
     }
   },
-  "if": { "properties": { "mode": { "const": "auto" } } },
-  "then": { "required": ["master_addr"] }
+  "required": [
+    "modulator_type",
+    "audio_mode",
+    "sample_rate",
+    "carrier_frequency",
+    "symbol_rate",
+    "modulation",
+    "transport"
+  ],
+  "additionalProperties": false
 }
