@@ -10,6 +10,9 @@ module DCF.SDR.SoapyFFI
   , soapyConfigureTx
   , soapyOpenTxStream
   , soapyWriteCF32
+  , soapyConfigureRx
+  , soapyOpenRxStream
+  , soapyReadCF32
   , soapyCloseStream
   , soapyClose
   ) where
@@ -55,3 +58,25 @@ foreign import ccall unsafe "soapy_bridge.h soapy_close_stream"
 
 foreign import ccall unsafe "soapy_bridge.h soapy_close"
   soapyClose :: SoapyDev -> IO ()
+
+-- ── RX imports ────────────────────────────────────────────────────────────────
+
+foreign import ccall unsafe "soapy_bridge.h soapy_configure_rx"
+  soapyConfigureRx :: SoapyDev
+                   -> CDouble   -- center_freq_hz
+                   -> CDouble   -- sample_rate_hz
+                   -> CDouble   -- gain_db
+                   -> IO ()
+
+foreign import ccall unsafe "soapy_bridge.h soapy_open_rx_stream"
+  soapyOpenRxStream :: SoapyDev -> IO SoapyStream
+
+-- | Read interleaved CF32 samples.
+--   Returns samples read (>0), 0 on timeout, negative on error.
+foreign import ccall safe "soapy_bridge.h soapy_read_cf32"
+  soapyReadCF32 :: SoapyDev
+                -> SoapyStream
+                -> Ptr CFloat   -- iq_out buffer (caller-allocated)
+                -> CInt         -- num_samples
+                -> CLong        -- timeout_us
+                -> IO CInt

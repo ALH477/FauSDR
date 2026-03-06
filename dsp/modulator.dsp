@@ -30,14 +30,31 @@ symbol_clock  = os.lf_squarewave(symbol_rate);
 //    Trivial: positive clock half = +1, negative = -1
 bpsk_symbol   = select2(symbol_clock > 0, -1.0, 1.0);
 
-// ── Root-raised cosine approximation (4th-order Butterworth lowpass) ─────────
-//    True RRC requires precomputed FIR coefficients (see ITU-T rec. G.703).
-//    This Butterworth approximation captures the spectral shape at the cost
-//    of non-ideal stopband attenuation; adequate for lab bring-up and
-//    spectral mask evaluation but should be replaced before FCC §15.249
-//    submission with a proper FIR (e.g., 63-tap erf-based Kaiser-windowed RRC).
-rrc_bw  = symbol_rate / ma.SR;
-pulse   = bpsk_symbol : fi.lowpass(4, symbol_rate * (1.0 + rrc_rolloff) * 0.5);
+// ── Root-raised-cosine FIR pulse shaping filter ───────────────────────────────
+//
+// 63-tap Kaiser-windowed RRC, alpha=0.35, beta=8.0, T=1 (normalized).
+// Replaces the 4th-order Butterworth approximation.
+//
+// The `rrc_rolloff` hslider is retained for MapUI compatibility.
+// Coefficient changes require recompile (regenerate via rrc_gen.py).
+//
+// See modulator_hs.dsp for full derivation notes.
+
+rrc35_coeffs = waveform {
+  -0.000000499, 0.000000032, 0.000002364, -0.000003902, -0.000001013, 0.000011437, -0.000013271,
+  -0.000007479, 0.000037337, -0.000032618, -0.000030961, 0.000099169, -0.000064865, -0.000098284,
+  0.000231999, -0.000107568, -0.000269222, 0.000503715, -0.000143010, -0.000685631, 0.001068726,
+  -0.000109512, -0.001750678, 0.002395231, 0.000215126, -0.005085017, 0.006802846, 0.001919179,
+  -0.024575477, 0.056235955, -0.084361170, 1.095634118, -0.084361170, 0.056235955, -0.024575477,
+  0.001919179, 0.006802846, -0.005085017, 0.000215126, 0.002395231, -0.001750678, -0.000109512,
+  0.001068726, -0.000685631, -0.000143010, 0.000503715, -0.000269222, -0.000107568, 0.000231999,
+  -0.000098284, -0.000064865, 0.000099169, -0.000030961, -0.000032618, 0.000037337, -0.000007479,
+  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499,
+};
+
+rrc_coeff(n) = rrc35_coeffs, int(n) : rdtable;
+rrc_ntaps    = 63;
+pulse        = bpsk_symbol <: sum(i, rrc_ntaps, rrc_coeff(i) * (_@i));
 
 // ── NCO: generates quadrature carrier ─────────────────────────────────────────
 carrier_i = os.oscrc(carrier_freq);

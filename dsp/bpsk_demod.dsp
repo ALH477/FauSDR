@@ -75,8 +75,30 @@ costas_loop(i_in, q_in) =
   }
   in baseband_i;  // I arm carries the demodulated data
 
-// ── Matched filter (lowpass integrate-dump approximation) ─────────────────────
-matched_filter(sym) = sym : fi.lowpass(2, mf_bw * symbol_rate * 0.5);
+// ── Matched filter (63-tap RRC receive filter) ────────────────────────────────
+//
+// The optimal receiver for an RRC-shaped transmit signal is a matched filter
+// with the same RRC impulse response — giving a raised-cosine end-to-end
+// response and zero ISI at the correct sampling instants.
+//
+// Same coefficients as the transmit filter (alpha=0.35, beta=8.0, 63 taps).
+// See modulator_hs.dsp for full derivation notes.
+
+rrc35_coeffs = waveform {
+  -0.000000499, 0.000000032, 0.000002364, -0.000003902, -0.000001013, 0.000011437, -0.000013271,
+  -0.000007479, 0.000037337, -0.000032618, -0.000030961, 0.000099169, -0.000064865, -0.000098284,
+  0.000231999, -0.000107568, -0.000269222, 0.000503715, -0.000143010, -0.000685631, 0.001068726,
+  -0.000109512, -0.001750678, 0.002395231, 0.000215126, -0.005085017, 0.006802846, 0.001919179,
+  -0.024575477, 0.056235955, -0.084361170, 1.095634118, -0.084361170, 0.056235955, -0.024575477,
+  0.001919179, 0.006802846, -0.005085017, 0.000215126, 0.002395231, -0.001750678, -0.000109512,
+  0.001068726, -0.000685631, -0.000143010, 0.000503715, -0.000269222, -0.000107568, 0.000231999,
+  -0.000098284, -0.000064865, 0.000099169, -0.000030961, -0.000032618, 0.000037337, -0.000007479,
+  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499,
+};
+
+rrc_coeff(n)    = rrc35_coeffs, int(n) : rdtable;
+rrc_ntaps       = 63;
+matched_filter(sym) = sum(i, rrc_ntaps, rrc_coeff(i) * (sym@i));
 
 // ── Soft decision ─────────────────────────────────────────────────────────────
 // Output is a continuous-valued soft symbol ∈ (−∞, +∞).

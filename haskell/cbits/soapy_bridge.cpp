@@ -81,4 +81,53 @@ void soapy_close(SoapyDevHandle handle) {
     SoapySDR::Device::unmake(static_cast<SoapySDR::Device*>(handle));
 }
 
+// ── RX path ───────────────────────────────────────────────────────────────────
+
+void soapy_configure_rx(SoapyDevHandle handle,
+                         double center_freq_hz,
+                         double sample_rate_hz,
+                         double gain_db)
+{
+    auto* dev = static_cast<SoapySDR::Device*>(handle);
+    dev->setSampleRate(SOAPY_SDR_RX, 0, sample_rate_hz);
+    dev->setFrequency  (SOAPY_SDR_RX, 0, center_freq_hz);
+    dev->setGain       (SOAPY_SDR_RX, 0, gain_db);
+}
+
+SoapyStreamHandle soapy_open_rx_stream(SoapyDevHandle handle) {
+    auto* dev = static_cast<SoapySDR::Device*>(handle);
+    try {
+        SoapySDR::Stream* stream = dev->setupStream(SOAPY_SDR_RX, SOAPY_SDR_CF32);
+        dev->activateStream(stream);
+        return static_cast<SoapyStreamHandle>(stream);
+    } catch (...) {
+        fprintf(stderr, "[soapy-bridge] RX setupStream failed\n");
+        return nullptr;
+    }
+}
+
+int soapy_read_cf32(SoapyDevHandle    devHandle,
+                     SoapyStreamHandle streamHandle,
+                     float*            iq_out,
+                     int               num_samples,
+                     long              timeout_us)
+{
+    auto* dev    = static_cast<SoapySDR::Device*>(devHandle);
+    auto* stream = static_cast<SoapySDR::Stream*>(streamHandle);
+
+    void* bufs[1] = { iq_out };
+    int flags     = 0;
+    long long t   = 0;
+
+    int ret = dev->readStream(stream, bufs,
+                              static_cast<size_t>(num_samples),
+                              flags, t,
+                              static_cast<long long>(timeout_us));
+    /* ret > 0: samples received
+     * ret == SOAPY_SDR_TIMEOUT: return 0 (non-fatal, caller retries)
+     * ret < 0: other error, propagate */
+    if (ret == SOAPY_SDR_TIMEOUT) return 0;
+    return ret;
+}
+
 } // extern "C"

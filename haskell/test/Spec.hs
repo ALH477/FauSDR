@@ -5,7 +5,9 @@
 
 import Test.Hspec
 import qualified FrameSpec
+import qualified ConformanceSpec
 
 main :: IO ()
 main = hspec $ do
-  describe "Frame + Symbol" FrameSpec.spec
+  describe "Frame + Symbol"          FrameSpec.spec
+  describe "Cross-language conformance" ConformanceSpec.spec
