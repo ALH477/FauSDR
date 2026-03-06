@@ -4,6 +4,8 @@
 
 Two codebases. One stack. A Haskell/Faust/SoapySDR RF modulation pipeline and a polyglot low-latency communications framework, sharing a custom 17-byte transport protocol at their boundary.
 
+![](FAUSDR.png)
+
 ---
 
 ## Repository Layout
@@ -629,9 +631,11 @@ All shells set `CC=clang`, `CXX=clang++`, `FAUST_ARCH_PATH`, `PKG_CONFIG_PATH`, 
 
 ---
 
+
+
 ## License
 
-GPL-3.0. See `LICENSE`.
+LGPL-3.0. See `LICENSE`.
 
 DCF excludes cryptographic primitives to comply with U.S. EAR and ITAR. Users adding encryption (e.g. TLS via a transport plugin) are responsible for their own export compliance. DeMoD LLC disclaims liability for non-compliant modifications.
 
