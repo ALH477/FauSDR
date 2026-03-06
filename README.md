@@ -1,6 +1,6 @@
 # DeMoD — Faust-SDR & Communications Framework
 
-**DeMoD LLC** · GPL-3.0 · [info@demod.ltd](mailto:info@demod.ltd)
+**DeMoD LLC** · LGPL 2.1· [info@demod.ltd](mailto:info@demod.ltd)
 
 Two codebases. One stack. A Haskell/Faust/SoapySDR RF modulation pipeline and a polyglot low-latency communications framework, sharing a custom 17-byte transport protocol at their boundary.
 
