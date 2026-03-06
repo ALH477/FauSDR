@@ -33,6 +33,13 @@
 #include <string>
 #include <vector>
 
+/* htons/htonl for portable big-endian serialisation */
+#ifdef _WIN32
+#  include <winsock2.h>
+#else
+#  include <arpa/inet.h>
+#endif
+
 // ── Faust-generated DSP (injected by compiler) ────────────────────────────────
 <<includeIntrinsic>>
 <<includeclass>>
@@ -145,7 +152,8 @@ int main(int argc, char* argv[]) {
     // -- Main loop ------------------------------------------------------------
     while (gRunning.load()) {
         // Build & seal the transport frame for this burst
-        frame.seq = __builtin_bswap16(seq++);
+        // Sequence number: stored big-endian on the wire (matches dcf_frame.h)
+        frame.seq = htons(seq++);
         // timestamp: microseconds since start (24-bit, wraps ~16s)
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count() & 0xFFFFFF;
@@ -154,31 +162,72 @@ int main(int argc, char* argv[]) {
         frame.timestamp[2] =  us        & 0xFF;
         frame_seal(frame);
 
-        // TODO: encode frame bytes into payload signal that Faust receives
-        // (implement your symbol mapper here, e.g. BPSK/QPSK/custom)
-        // For now, Faust generates the waveform autonomously (e.g. test tone).
+        // Encode the sealed 17-byte frame as a BPSK NRZ symbol stream and
+        // feed it into Faust channel 0 (the symbol input).
+        //
+        // Mapping: bit=1 → +1.0f, bit=0 → -1.0f (NRZ-L)
+        // Each bit is held for samplesPerSymbol samples (rectangular pulse);
+        // the Faust DSP then applies RRC pulse shaping and phase-modulates
+        // onto the carrier.
+        //
+        // samplesPerSymbol = floor(sampleRate / symbolRate)
+        //   = floor(2_000_000 / 9_600) = 208 samples/symbol
+        // totalSymbolSamples = 136 bits × 208 = 28,288 samples/frame
+        //
+        // The Faust block size (burstSize) is typically 1024. We interleave
+        // frame encoding with Faust compute blocks here.
+        {
+            static constexpr int SYMBOL_RATE   = 9600;
+            const int sps = static_cast<int>(sampleRate) / SYMBOL_RATE;  // ≈208
 
-        // Run Faust compute
-        dsp.compute(static_cast<int>(burstSize), nullptr, outputs);
+            const uint8_t* frameBytes = reinterpret_cast<const uint8_t*>(&frame);
+            // Flatten 17 bytes → 136 bits as symbol values ±1.0
+            std::vector<float> symStream;
+            symStream.reserve(136 * sps);
+            for (int byte_i = 0; byte_i < 17; ++byte_i) {
+                for (int bit_i = 7; bit_i >= 0; --bit_i) {
+                    float sym = ((frameBytes[byte_i] >> bit_i) & 1) ? 1.0f : -1.0f;
+                    for (int s = 0; s < sps; ++s)
+                        symStream.push_back(sym);
+                }
+            }
 
-        // Interleave I/Q → CF32
-        for (size_t n = 0; n < burstSize; n++)
-            iqInterleaved[n] = { iBuf[n], qBuf[n] };
+            // Feed symbol stream to Faust in burstSize chunks, collect I/Q,
+            // then write all chunks to the SDR in one pass.
+            const size_t totalSamples = symStream.size();
+            size_t offset = 0;
+            while (offset < totalSamples) {
+                size_t chunkLen = std::min<size_t>(burstSize, totalSamples - offset);
+                // Zero-pad to burstSize so Faust always sees a full block
+                std::fill(iBuf.begin(), iBuf.end(), 0.0f);
+                std::copy(symStream.begin() + offset,
+                          symStream.begin() + offset + chunkLen,
+                          iBuf.begin());
+                FAUSTFLOAT* inputs[1]  = { iBuf.data() };   // channel 0 = symbol stream
+                dsp.compute(static_cast<int>(burstSize), inputs, outputs);
 
-        // Write to SDR
-        const void* txBufs[1] = { iqInterleaved.data() };
-        int flags = 0;
-        long long timeNs = 0;
-        int ret = sdr->writeStream(txStream, txBufs,
-                                   static_cast<size_t>(burstSize),
-                                   flags, timeNs, 1000000 /*1s timeout*/);
-        if (ret < 0) {
-            std::cerr << "[demod-sdr] writeStream error: " << SoapySDR::errToStr(ret) << "\n";
-            break;
+                // Interleave I/Q → CF32, truncate to valid chunkLen samples
+                iqInterleaved.resize(chunkLen);
+                for (size_t n = 0; n < chunkLen; ++n)
+                    iqInterleaved[n] = { outputs[0][n], outputs[1][n] };
+
+                const void* txBufs[1] = { iqInterleaved.data() };
+                int flags = 0; long long timeNs = 0;
+                int ret2 = sdr->writeStream(txStream, txBufs, chunkLen,
+                                            flags, timeNs, 1000000);
+                if (ret2 < 0) {
+                    std::cerr << "[demod-sdr] writeStream error: "
+                              << SoapySDR::errToStr(ret2) << "\n";
+                    goto teardown;
+                }
+                offset += chunkLen;
+            }
         }
+
     }
 
     // -- Teardown -------------------------------------------------------------
+teardown:
     sdr->deactivateStream(txStream);
     sdr->closeStream(txStream);
     SoapySDR::Device::unmake(sdr);

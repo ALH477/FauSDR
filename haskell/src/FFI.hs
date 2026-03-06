@@ -37,7 +37,13 @@ foreign import ccall unsafe "faust_bridge.h faust_dsp_init"
 
 -- | compute(dsp, count, inputs**, outputs**)
 -- inputs and outputs are Ptr (Ptr CFloat) — array of channel pointers.
-foreign import ccall unsafe "faust_bridge.h faust_dsp_compute"
+--
+-- MUST be `safe` (not `unsafe`): Faust-generated C++ calls malloc internally
+-- (e.g. for MapUI parameter lookup strings) and may throw std::exception via
+-- the LLVM JIT path.  Using `unsafe` would suppress GHC's ability to yield
+-- during the call, causing deadlocks under -N (multi-threaded RTS).
+-- All other Faust bridge calls are hot-path-free of allocation and remain unsafe.
+foreign import ccall safe "faust_bridge.h faust_dsp_compute"
   faustCompute :: FaustDsp
                -> CInt                    -- count
                -> Ptr (Ptr CFloat)        -- inputs  (array of channel ptrs)

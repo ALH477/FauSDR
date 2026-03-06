@@ -6,7 +6,7 @@ module DCF.SDR.Device
   , defaultSdrConfig
   , SdrDevice
   , withSdrDevice
-  , writeSamples
+  , writeSamples   -- ^ writeSamples :: SdrDevice -> Vector Float -> Int -> IO Int
   ) where
 
 import Control.Exception     (bracket, throwIO, ErrorCall (..))
@@ -73,12 +73,14 @@ withSdrDevice cfg action =
 
 -- | Write a vector of interleaved complex float samples [I0,Q0,I1,Q1,...].
 --   The vector length must be even (2 * num_samples).
---   Returns the number of IQ pairs written.
-writeSamples :: SdrDevice -> Vector Float -> IO Int
-writeSamples (SdrDevice dev stream) iqVec = do
+--   @timeoutUs@ comes from the active SdrConfig — do NOT pass
+--   defaultSdrConfig here, as that would silently ignore the caller's timeout.
+--   Returns the number of IQ pairs written (negative on SoapySDR error).
+writeSamples :: SdrDevice -> Vector Float -> Int -> IO Int
+writeSamples (SdrDevice dev stream) iqVec timeoutUs = do
   let numSamples = V.length iqVec `div` 2
   V.unsafeWith iqVec $ \ptr -> do
     n <- soapyWriteCF32 dev stream ptr
                         (fromIntegral numSamples)
-                        (fromIntegral $ sdrTimeoutUs defaultSdrConfig)
+                        (fromIntegral timeoutUs)
     return (fromIntegral n)

@@ -6,10 +6,15 @@
 --
 -- Sends a stream of beacon frames with incrementing sequence numbers and
 -- a 4-byte payload counter embedded in the payload field.
+--
+-- BUG FIX: previous version was missing `Data.Bits` import required for
+-- (.&.) in the payload byte extraction.  runModulator signature changed:
+-- frame source now yields Maybe DeModFrame (not Maybe (DeModFrame, ())).
 
 module Main where
 
-import Control.Monad         (forM_, forever, when)
+import Control.Monad         (when)
+import Data.Bits             ((.&.), shiftR)
 import Data.IORef            (newIORef, readIORef, modifyIORef')
 import Data.Word             (Word8, Word16, Word32)
 import System.Environment    (getArgs)
@@ -26,6 +31,7 @@ data CLI = CLI
   , cliFreq   :: Double
   , cliRate   :: Double
   , cliGain   :: Double
+  , cliCount  :: Maybe Int   -- ^ stop after N frames (Nothing = infinite)
   } deriving (Show)
 
 defaultCLI :: CLI
@@ -34,6 +40,7 @@ defaultCLI = CLI
   , cliFreq   = 433.92e6
   , cliRate   = 2e6
   , cliGain   = 20.0
+  , cliCount  = Nothing
   }
 
 parseCLI :: [String] -> CLI -> Either String CLI
@@ -48,34 +55,54 @@ parseCLI ("--rate"   : v : rest) cli = case readMaybe v of
 parseCLI ("--gain"   : v : rest) cli = case readMaybe v of
   Just d  -> parseCLI rest cli { cliGain = d }
   Nothing -> Left $ "Invalid --gain: " <> v
-parseCLI (flag : _) _ = Left $ "Unknown flag: " <> flag
+parseCLI ("--count"  : v : rest) cli = case readMaybe v of
+  Just n  -> parseCLI rest cli { cliCount = Just n }
+  Nothing -> Left $ "Invalid --count: " <> v
+parseCLI ("--help" : _) _ = Left ""   -- trigger usage print
+parseCLI (flag : _) _     = Left $ "Unknown flag: " <> flag
+
+usage :: String
+usage = unlines
+  [ "Usage: demod-sdr-hs [OPTIONS]"
+  , ""
+  , "  --driver NAME   SoapySDR driver  (default: rtlsdr)"
+  , "  --freq   HZ     Centre frequency (default: 433.92e6)"
+  , "  --rate   HZ     Sample rate      (default: 2e6)"
+  , "  --gain   DB     TX gain          (default: 20)"
+  , "  --count  N      Stop after N frames (default: infinite)"
+  , "  --help          Show this message"
+  ]
 
 -- ── Frame source ──────────────────────────────────────────────────────────────
 
--- | Produce an infinite stream of beacon frames.
---   The 4-byte payload encodes a 32-bit counter (big-endian) for easy
+-- | Produce an infinite (or bounded) stream of beacon frames.
+--   The 4-byte payload encodes a big-endian 32-bit counter for easy
 --   packet counting on the RX side.
-makeBeaconSource :: IO (IO (Maybe (DeModFrame, ())))
-makeBeaconSource = do
+makeBeaconSource :: Maybe Int -> IO (IO (Maybe DeModFrame))
+makeBeaconSource limit = do
   counterRef <- newIORef (0 :: Word32)
   return $ do
     c <- readIORef counterRef
-    modifyIORef' counterRef (+1)
-    let p0 = fromIntegral $ (c `div` 0x1000000) .&. 0xFF
-        p1 = fromIntegral $ (c `div` 0x10000  ) .&. 0xFF
-        p2 = fromIntegral $ (c `div` 0x100    ) .&. 0xFF
-        p3 = fromIntegral $  c                   .&. 0xFF
-    let frame = DeModFrame
-          { frameVersion     = 1
-          , frameType        = FBeacon
-          , frameSeq         = 0     -- filled by runModulator
-          , frameSrcId       = 0x0001
-          , frameDstId       = broadcast
-          , framePayload     = (p0, p1, p2, p3)
-          , frameTimestampUs = 0     -- filled by runModulator
-          }
-    putStrLn $ "[demod-hs] beacon #" <> show c
-    return (Just (frame, ()))
+    -- Stop when limit reached
+    case limit of
+      Just n | fromIntegral c >= n -> return Nothing
+      _                            -> do
+        modifyIORef' counterRef (+ 1)
+        let p0 = fromIntegral $ (c `shiftR` 24) .&. 0xFF
+            p1 = fromIntegral $ (c `shiftR` 16) .&. 0xFF
+            p2 = fromIntegral $ (c `shiftR`  8) .&. 0xFF
+            p3 = fromIntegral $  c              .&. 0xFF
+            frame = DeModFrame
+              { frameVersion     = 1
+              , frameType        = FBeacon
+              , frameSeq         = 0     -- filled by runModulator
+              , frameSrcId       = 0x0001
+              , frameDstId       = broadcast
+              , framePayload     = (p0, p1, p2, p3)
+              , frameTimestampUs = 0     -- filled by runModulator
+              }
+        putStrLn $ "[demod-hs] beacon #" <> show c
+        return (Just frame)
 
 -- ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -83,17 +110,21 @@ main :: IO ()
 main = do
   args <- getArgs
   cli  <- case parseCLI args defaultCLI of
+    Left "" -> do
+      putStr usage
+      exitFailure
     Left err -> do
       putStrLn $ "Error: " <> err
-      putStrLn "Usage: demod-sdr-hs [--driver NAME] [--freq HZ] [--rate HZ] [--gain DB]"
+      putStr usage
       exitFailure
     Right c  -> return c
 
-  putStrLn $ "[demod-hs] DeMoD Faust-SDR Haskell TX"
+  putStrLn "[demod-hs] DeMoD Faust-SDR Haskell TX"
   putStrLn $ "[demod-hs] driver=" <> cliDriver cli
   putStrLn $ "[demod-hs] freq="   <> show (cliFreq cli / 1e6) <> " MHz"
   putStrLn $ "[demod-hs] rate="   <> show (cliRate cli / 1e6) <> " MSPS"
   putStrLn $ "[demod-hs] gain="   <> show (cliGain cli)       <> " dB"
+  putStrLn $ "[demod-hs] count="  <> maybe "infinite" show (cliCount cli)
 
   let cfg = defaultModulatorConfig
         { modSdr = (modSdr defaultModulatorConfig)
@@ -108,6 +139,7 @@ main = do
             { symSampleRate = cliRate cli }
         }
 
-  src <- makeBeaconSource
+  src <- makeBeaconSource (cliCount cli)
   putStrLn "[demod-hs] Starting TX loop — Ctrl+C to stop"
   runModulator cfg src
+  putStrLn "[demod-hs] TX complete"

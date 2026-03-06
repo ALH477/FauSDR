@@ -1,17 +1,21 @@
 cabal-version:      3.4
 name:               dcf-faust-sdr
-version:            0.2.0.0
+version:            0.2.1.0
 synopsis:           DeMoD Faust-SDR Haskell TX pipeline
 description:
   Haskell layer for the DeMoD Faust-SDR system.
   Owns: 17-byte transport frame (CRC-CCITT), BPSK symbol encoding,
   and the top-level TX pipeline. Delegates DSP compute to Faust via
-  C FFI and IQ output to SoapySDR via C FFI.
+  C++ FFI (cbits/faust_bridge.cpp) and IQ output to SoapySDR via
+  C FFI (cbits/soapy_bridge.cpp).
 license:            GPL-3.0-only
 author:             DeMoD LLC
 maintainer:         info@demod.ltd
 category:           Hardware, DSP, Network
 build-type:         Simple
+
+-- Require GHC 9.4+ for GHC2021 default-language and vector-storable-mutable API.
+tested-with: GHC == 9.6.6
 
 common opts
   default-language: GHC2021
@@ -19,6 +23,8 @@ common opts
     -Wall
     -Wunused-imports
     -Wunused-matches
+    -Wincomplete-uni-patterns
+    -Wmissing-signatures
     -O2
     -threaded
     -rtsopts
@@ -39,18 +45,34 @@ library
     DCF.Transport.Symbol
     DCF.Modulator
 
-  c-sources:
+  -- BUG FIX: cbits/faust_bridge.cpp and cbits/soapy_bridge.cpp are C++ source
+  -- files.  Cabal's `c-sources` stanza compiles with cc (C compiler), which
+  -- will fail on C++ constructs (new, delete, namespaces, exceptions).
+  -- The correct stanza for C++ is `cxx-sources`.
+  --
+  -- Additionally, `cxx-options` passes -std=c++17 to clang++.  Without this,
+  -- GHC's default C++ compile invocation uses whatever the system default is,
+  -- which may be c++14 or c++11 and will fail on structured bindings / if-init
+  -- used in the bridge.
+  cxx-sources:
     cbits/faust_bridge.cpp
     cbits/soapy_bridge.cpp
 
+  cxx-options:
+    -std=c++17
+    -O2
+    -fPIC
+
   include-dirs:   cbits
 
+  -- stdc++ must be in extra-libraries, not pkgconfig-depends.
+  -- SoapySDR is linked via pkgconfig (provides the -I and -L flags).
   extra-libraries:
     stdc++
-    SoapySDR
     m
 
-  pkgconfig-depends: SoapySDR
+  pkgconfig-depends:
+    SoapySDR
 
   build-depends:
       base              >= 4.17 && < 5

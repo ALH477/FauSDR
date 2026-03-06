@@ -532,7 +532,14 @@
   stats
   reliable-packets
   reliable-lock
-  ack-received)
+  ack-received
+  ;; Atomic thread-ownership slot.
+  ;; ensure-reliable-handler does a compare-and-swap on this cell
+  ;; instead of searching bt:all-threads by name (which is non-unique
+  ;; and subject to a TOCTOU race where two callers both see nil and
+  ;; both spawn a handler thread).
+  ;; Value: nil = no handler running; thread object = handler is live.
+  (reliable-thread-cell (list nil)))
 
 (defstruct network-stats
   (packets-sent 0)
@@ -675,48 +682,63 @@
         (send-udp-raw endpoint msg-bytes remote-host remote-port))))
 
 (defun ensure-reliable-handler (endpoint)
-  ;; BUG FIX: bt:thread-alive-p on nil (when find returns nil) signals an error.
-  ;; Guard with explicit nil check before testing liveness.
-  (let ((existing (find "udp-reliable" (bt:all-threads)
-                        :key #'bt:thread-name :test #'search)))
-    (unless (and existing (bt:thread-alive-p existing))
-      (bt:make-thread
-       (lambda ()
-         (loop while (udp-endpoint-running endpoint)
-               do (progn
-                    (sleep 0.1)
-                    (bt:with-lock-held ((udp-endpoint-reliable-lock endpoint))
-                      (maphash
-                       (lambda (seq entry)
-                         (unless (gethash seq (udp-endpoint-ack-received endpoint))
-                           (let ((info entry))
-                             (let ((elapsed (- (get-internal-real-time)
-                                              (getf info :sent-time))))
-                               (when (> elapsed
-                                        (* (dcf-config-udp-reliable-timeout
-                                             (dcf-node-config *node*))
-                                           internal-time-units-per-second
-                                           0.001))
-                                 (if (< (getf info :attempts) 3)
-                                     (progn
-                                       (send-udp-raw
-                                        endpoint
-                                        (serialize-proto-message (getf info :msg))
-                                        (getf info :host)
-                                        (getf info :port))
-                                       (setf (getf info :attempts)
-                                             (1+ (getf info :attempts)))
-                                       (setf (getf info :sent-time)
-                                             (get-internal-real-time))
-                                       (incf (network-stats-retransmits
-                                              (udp-endpoint-stats endpoint))))
-                                     (progn
-                                       (remhash seq
-                                                (udp-endpoint-reliable-packets endpoint))
-                                       (incf (network-stats-packets-lost
-                                              (udp-endpoint-stats endpoint)))))))))))
-                       (udp-endpoint-reliable-packets endpoint))))))
-       :name "udp-reliable"))))
+  ;; BUG FIX (race condition): the previous implementation searched
+  ;; bt:all-threads by name string.  This is non-unique and subject to a
+  ;; TOCTOU race: two callers both observe nil before either has started a
+  ;; thread, so BOTH spawn a handler — double-retransmit, corrupted retry state.
+  ;;
+  ;; Fix: use a per-endpoint owner cell (reliable-thread-cell — a cons whose
+  ;; car holds the live thread or nil).  We perform the check-and-spawn while
+  ;; holding reliable-lock, eliminating the race window entirely.
+  (let ((cell (udp-endpoint-reliable-thread-cell endpoint)))
+    (flet ((spawn ()
+             (bt:make-thread
+              (lambda ()
+                (unwind-protect
+                    (loop while (udp-endpoint-running endpoint)
+                          do (sleep 0.1)
+                             (bt:with-lock-held ((udp-endpoint-reliable-lock endpoint))
+                               (maphash
+                                (lambda (seq entry)
+                                  (unless (gethash seq (udp-endpoint-ack-received endpoint))
+                                    (let* ((info    entry)
+                                           (elapsed (- (get-internal-real-time)
+                                                       (getf info :sent-time))))
+                                      (when (> elapsed
+                                               (* (dcf-config-udp-reliable-timeout
+                                                    (dcf-node-config *node*))
+                                                  internal-time-units-per-second
+                                                  0.001))
+                                        (if (< (getf info :attempts) 3)
+                                            (progn
+                                              (send-udp-raw
+                                               endpoint
+                                               (serialize-proto-message (getf info :msg))
+                                               (getf info :host)
+                                               (getf info :port))
+                                              (setf (getf info :attempts)
+                                                    (1+ (getf info :attempts)))
+                                              (setf (getf info :sent-time)
+                                                    (get-internal-real-time))
+                                              (incf (network-stats-retransmits
+                                                     (udp-endpoint-stats endpoint))))
+                                            (progn
+                                              (remhash seq
+                                                       (udp-endpoint-reliable-packets endpoint))
+                                              (incf (network-stats-packets-lost
+                                                     (udp-endpoint-stats endpoint)))))))))
+                                (udp-endpoint-reliable-packets endpoint))))
+                  ;; On exit (normal or error): clear ownership so restart is possible.
+                  (setf (car cell) nil)))
+              :name "dcf-udp-reliable")))
+      ;; Atomic-safe check-and-spawn under reliable-lock.
+      ;; We already hold this lock during retransmit loops, so contention is
+      ;; brief and bounded.
+      (bt:with-lock-held ((udp-endpoint-reliable-lock endpoint))
+        (let ((current (car cell)))
+          (when (or (null current)
+                    (not (bt:thread-alive-p current)))
+            (setf (car cell) (spawn))))))))
 (defun stop-udp-endpoint (endpoint)
   (setf (udp-endpoint-running endpoint) nil)
   (when (udp-endpoint-thread endpoint)
