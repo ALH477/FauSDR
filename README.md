@@ -4,6 +4,8 @@
 
 Two codebases. One stack. A Haskell/Faust/SoapySDR RF modulation pipeline and a polyglot low-latency communications framework, sharing a custom 17-byte transport protocol at their boundary.
 
+![](.FAUSDR.png)
+
 ---
 
 ## Repository Layout
