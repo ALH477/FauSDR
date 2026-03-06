@@ -9,8 +9,6 @@
 //   • integrate-and-dump (simple symbol-rate sampler)
 
 import("stdfaust.lib");
-import("filters.lib");
-import("maths.lib");
 
 // ── UI Parameters (set via MapUI / same paths as modulator) ─────────────────
 carrier_freq  = hslider("/demodulator/carrier_freq[unit:Hz]", 0.1, 0.001, 0.5, 0.0001) : si.smoo;
@@ -24,16 +22,16 @@ output_gain   = hslider("/demodulator/output_gain", 1.0, 0.0, 2.0, 0.001);   // 
 rrc_matched(sig) = sig : fi.lowpass(4, symbol_rate * (1.0 + rrc_rolloff) * 0.5);
 
 // ── Recovered quadrature carrier (must match transmitter phase!) ─────────────
-carrier_i = os.osc(carrier_freq);          // cos(2π f t)
-carrier_q = os.osc(carrier_freq + 0.25);   // sin(2π f t) = cos(2π f t + π/2)
+carrier_cos = os.osc(carrier_freq + 0.25);  // cos(2π f t) = sin(2π f t + π/2)
+carrier_sin = os.osc(carrier_freq);         // sin(2π f t)
 
 // ── Coherent demodulation ────────────────────────────────────────────────────
 demod(i_in, q_in) =
-    letrec {
-        'baseband = (i_in * carrier_i + q_in * carrier_q) * 2.0;   // real part after mixing (I*cos + Q*sin)
-        'shaped   = rrc_matched(baseband);
-    }
-    in shaped * output_gain;
+    shaped * output_gain
+with {
+    baseband = (i_in * carrier_cos + q_in * carrier_sin) * 2.0;   // real part after mixing (I*cos + Q*sin)
+    shaped   = rrc_matched(baseband);
+};
 
 // ── Main process: 2 in (I,Q) → 1 out (soft symbols ≈ ±1) ────────────────────
 process = demod;
