@@ -40,7 +40,8 @@ import qualified Data.Vector.Storable         as V
 import qualified Data.Vector.Storable.Mutable as VM
 import Foreign.C.String           (withCString)
 import Foreign.C.Types            (CFloat (..), CInt (..))
-import Foreign.Marshal.Array      (allocaArray, pokeElemOff)
+import Foreign.Marshal.Array      (allocaArray)
+import Foreign.Storable           (pokeElemOff)
 import Foreign.Ptr                (Ptr, castPtr, nullPtr)
 
 import DCF.Faust.FFI

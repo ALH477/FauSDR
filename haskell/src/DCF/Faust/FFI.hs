@@ -17,7 +17,7 @@ module DCF.Faust.FFI
   , faustDestroy
   ) where
 
-import Foreign.Ptr          (Ptr, nullPtr)
+import Foreign.Ptr          (Ptr)
 import Foreign.C.Types      (CInt (..), CFloat (..))
 import Foreign.C.String     (CString)
 

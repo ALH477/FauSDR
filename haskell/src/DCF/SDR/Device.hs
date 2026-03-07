@@ -20,7 +20,7 @@ import Data.Vector.Storable  (Vector)
 import qualified Data.Vector.Storable         as V
 import qualified Data.Vector.Storable.Mutable as VM
 import Foreign.C.String      (withCString)
-import Foreign.C.Types       (CDouble (..), CFloat (..), CInt (..), CLong (..))
+import Foreign.C.Types       (CDouble (..))
 import Foreign.Ptr           (nullPtr, castPtr)
 
 import DCF.SDR.SoapyFFI
@@ -82,7 +82,7 @@ writeSamples (SdrDevice dev stream) iqVec timeoutUs = do
   let numSamples = V.length iqVec `div` 2
   V.unsafeWith iqVec $ \ptr ->
     fromIntegral <$>
-      soapyWriteCF32 dev stream ptr
+      soapyWriteCF32 dev stream (castPtr ptr)
                      (fromIntegral numSamples)
                      (fromIntegral timeoutUs)
 
