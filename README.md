@@ -1,6 +1,6 @@
 # DeMoD — Faust-SDR & Communications Framework
 
-**DeMoD LLC** · GPL-3.0 · [info@demod.ltd](mailto:info@demod.ltd)
+**DeMoD LLC** · lGPL-3.0 · [info@demod.ltd](mailto:info@demod.ltd)
 
 Two codebases. One stack. A Haskell/Faust/SoapySDR RF TX/RX pipeline and a polyglot low-latency communications framework, sharing a custom 17-byte transport protocol at their boundary.
 
@@ -572,7 +572,7 @@ Costas loop PLL architecture: all three Costas loop implementations (`bpsk_demod
 
 ## License
 
-GPL-3.0. See `LICENSE`.
+lGPL-3.0. See `LICENSE`.
 
 DCF excludes cryptographic primitives to comply with U.S. EAR and ITAR. Users adding encryption (e.g. TLS via a transport plugin) are responsible for their own export compliance. DeMoD LLC disclaims liability for non-compliant modifications.
 
