@@ -61,7 +61,7 @@ rrc35_coeffs = waveform {
   0.001919179, 0.006802846, -0.005085017, 0.000215126, 0.002395231, -0.001750678, -0.000109512,
   0.001068726, -0.000685631, -0.000143010, 0.000503715, -0.000269222, -0.000107568, 0.000231999,
   -0.000098284, -0.000064865, 0.000099169, -0.000030961, -0.000032618, 0.000037337, -0.000007479,
-  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499,
+  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499
 };
 
 // Read the nth FIR coefficient from the waveform table (0-indexed).
@@ -81,13 +81,12 @@ carrier_q = os.oscs(carrier_freq);    // sine (90° shifted)
 // phi(t) = shaped_symbol(t) * mod_index
 // I(t) = cos(wt + phi) = cos(wt)cos(phi) - sin(wt)sin(phi)
 // Q(t) = sin(wt + phi) = cos(wt)sin(phi) + sin(wt)cos(phi)
-pm_modulate(sym) =
-  let {
+pm_modulate(sym) = (i_mod * output_gain), (q_mod * output_gain)
+with {
     phi   = pulse_shape(sym) * mod_index;
     i_mod = carrier_i * cos(phi) - carrier_q * sin(phi);
     q_mod = carrier_i * sin(phi) + carrier_q * cos(phi);
-  }
-  in (i_mod * output_gain), (q_mod * output_gain);
+};
 
 // ── Main process: 1 input (symbol stream) → 2 outputs (I, Q) ────────────────
 process = pm_modulate;

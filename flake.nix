@@ -104,9 +104,23 @@
         ];
 
         # ── DSP and signal processing ─────────────────────────────────────────
+        # ── Faust with C++ backend ─────────────────────────────────────────────────
+        # nixpkgs faust2 has no top-level `backends` override parameter —
+        # backend selection is done via CMake cache variables per-backend.
+        # CPP_BACKEND / OCPP_BACKEND = "COMPILER STATIC DYNAMIC" enables -lang c++.
+        # LLVM_BACKEND keeps IR/JIT support.  C_BACKEND adds -lang c.
+        faustWithCpp = pkgs.faust.overrideAttrs (old: {
+          cmakeFlags = (old.cmakeFlags or []) ++ [
+            "-DCPP_BACKEND=COMPILER STATIC DYNAMIC"
+            "-DOCPP_BACKEND=COMPILER STATIC DYNAMIC"
+            "-DC_BACKEND=COMPILER STATIC DYNAMIC"
+            "-DLLVM_BACKEND=COMPILER STATIC DYNAMIC"
+          ];
+        });
+
         dspStack = with pkgs; [
-          faust
-          faustlive
+          faustWithCpp
+          (faustlive.override { faust = faustWithCpp; })
           liquid-dsp
           fftwFloat
           volk
@@ -278,14 +292,25 @@
             local src="$DEMOD_DSP_DIR/$1"
             local arch="$2"
             local out="$DEMOD_BUILD_DIR/$3"
-            if [ -z "$arch" ]; then arch="$PROJECT_ROOT/arch/soapy-sdr-lib.cpp"; fi
             mkdir -p "$DEMOD_BUILD_DIR"
             printf "  ''${_CY}faust''${_R}  %s  ''${_GR}→''${_R}  %s\n" "$1" "$(basename "$out")"
-            if faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out" 2>/dev/null; then
-              printf "  ''${_GN}✓  compiled''${_R}\n"
+            # When arch is empty, omit -a: Faust emits a bare DSP class for
+            # direct linking by faust_bridge.cpp (library/headless mode).
+            # Passing -a "" causes Faust to fail looking for the cxx backend.
+            if [ -n "$arch" ]; then
+              if faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out" 2>/dev/null; then
+                printf "  ''${_GN}✓  compiled''${_R}\n"
+              else
+                printf "  ''${_RD}✗  FAILED''${_R}\n"
+                faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out"
+              fi
             else
-              printf "  ''${_RD}✗  FAILED''${_R}\n"
-              faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out"
+              if faust -lang c++ -vec -vs 256 "$src" -o "$out" 2>/dev/null; then
+                printf "  ''${_GN}✓  compiled''${_R}\n"
+              else
+                printf "  ''${_RD}✗  FAILED''${_R}\n"
+                faust -lang c++ -vec -vs 256 "$src" -o "$out"
+              fi
             fi
           }
 
