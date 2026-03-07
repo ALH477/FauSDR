@@ -110,17 +110,22 @@
         # CPP_BACKEND / OCPP_BACKEND = "COMPILER STATIC DYNAMIC" enables -lang c++.
         # LLVM_BACKEND keeps IR/JIT support.  C_BACKEND adds -lang c.
         faustWithCpp = pkgs.faust.overrideAttrs (old: {
-          cmakeFlags = (old.cmakeFlags or []) ++ [
-            "-DCPP_BACKEND=COMPILER STATIC DYNAMIC"
-            "-DOCPP_BACKEND=COMPILER STATIC DYNAMIC"
-            "-DC_BACKEND=COMPILER STATIC DYNAMIC"
-            "-DLLVM_BACKEND=COMPILER STATIC DYNAMIC"
-          ];
+          # Enable the C++ compiler backend so `faust -lang c++` works.
+          # "COMPILER" = include backend in the faust binary.
+          # We strip any existing backend flags to avoid duplicates, then append.
+          cmakeFlags =
+            builtins.filter
+              (f: builtins.match "-D(C|CPP|OCPP)_BACKEND=.*" f == null)
+              (old.cmakeFlags or [])
+            ++ [
+              "-DCPP_BACKEND=COMPILER"
+              "-DOCPP_BACKEND=COMPILER"
+              "-DC_BACKEND=COMPILER"
+            ];
         });
 
         dspStack = with pkgs; [
           faustWithCpp
-          (faustlive.override { faust = faustWithCpp; })
           liquid-dsp
           fftwFloat
           volk
