@@ -24,7 +24,7 @@
 
         haskellTools = [
           ghc.ghc
-          ghc.cabal-install
+          pkgs.cabal-install
           ghc.haskell-language-server   # HLS — editor LSP
           ghc.hlint                     # linter
           ghc.ormolu                    # formatter (stricter than stylish-haskell)
@@ -121,7 +121,7 @@
           export LIBUSB_DEBUG=0
 
           # Haskell env
-          export PATH="${ghc.ghc}/bin:${ghc.cabal-install}/bin:$PATH"
+          export PATH="${ghc.ghc}/bin:${pkgs.cabal-install}/bin:$PATH"
           export PROJECT_ROOT="$(pwd)"
 
           echo ""
@@ -148,6 +148,7 @@
           echo "    cabal-build     build all Haskell targets"
           echo "    cabal-test      run Frame + Symbol + QuickCheck test suite"
           echo "    cabal-run       run demod-sdr-hs with default args"
+          echo "    faust-all-audio compile all JACK/acoustic DSP files (run before cabal build acoustic-hello-*)"
           echo "    sdr-probe       enumerate attached SDR devices"
           echo "    iq-plot         open inspectrum (pass .cf32 file as argument)"
           echo "    frame-tx-test   encode the reference frame and hex-dump it"
@@ -182,6 +183,11 @@
 
           alias faust-all-mod='for m in modulator_hs qpsk_mod gmsk_mod ask_mod fsk_mod; do _faust_hs ${m}.dsp; done'
           alias faust-all-demod='for d in bpsk_demod qpsk_demod gmsk_demod ask_demod fsk_demod; do _faust_hs ${d}.dsp; done'
+          alias faust-acoustic-mod='_faust_hs acoustic_fsk_mod.dsp acoustic_fsk_mod_gen.cpp'
+          alias faust-acoustic-demod='_faust_hs acoustic_fsk_demod.dsp acoustic_fsk_demod_gen.cpp'
+          alias faust-jack-mod='_faust_hs jack_mod.dsp jack_mod_gen.cpp'
+          alias faust-jack-demod='_faust_hs jack_demod.dsp jack_demod_gen.cpp'
+          alias faust-all-audio='for d in jack_mod jack_demod acoustic_fsk_mod acoustic_fsk_demod; do _faust_hs ${d}.dsp; done'
 
           # Cabal aliases
           alias cabal-build='cd $PROJECT_ROOT && cabal build all'
@@ -217,6 +223,54 @@ print(\"CRC OK\")
         '';
 
       in {
+
+        # ── Packages: Faust-generated C++ → cabal2nix build ───────────────────
+        packages =
+          let
+            # Step 1: run Faust to produce the generated .cpp files
+            faustAudioGen = pkgs.runCommand "faust-audio-gen" {
+              buildInputs = [ pkgs.faust ];
+            } ''
+              mkdir -p $out
+              for dsp in acoustic_fsk_mod acoustic_fsk_demod jack_mod jack_demod; do
+                faust -a ${self}/arch/jack-lib.cpp \
+                      -lang c++ -vec -vs 256 \
+                      ${self}/dsp/''${dsp}.dsp \
+                      -o $out/''${dsp}_gen.cpp
+              done
+            '';
+
+            # Step 2: build the Haskell project
+            dcfFaustSdr = ghc.callCabal2nix "dcf-faust-sdr" self {
+              preConfigure = ''
+                mkdir -p build
+                cp ${faustAudioGen}/* build/
+              '';
+            };
+          in {
+            inherit dcfFaustSdr;
+
+            hello-tx = pkgs.writeShellScriptBin "hello-tx"
+              ''exec ${dcfFaustSdr}/bin/acoustic-hello-tx "$@"'';
+
+            hello-rx = pkgs.writeShellScriptBin "hello-rx"
+              ''exec ${dcfFaustSdr}/bin/acoustic-hello-rx "$@"'';
+
+            default = dcfFaustSdr;
+          };
+
+        # ── Apps: nix run .#hello-tx / .#hello-rx ────────────────────────────
+        apps = {
+          hello-tx = {
+            type    = "app";
+            program = "${self.packages.${system}.hello-tx}/bin/hello-tx";
+          };
+          hello-rx = {
+            type    = "app";
+            program = "${self.packages.${system}.hello-rx}/bin/hello-rx";
+          };
+          default = self.apps.${system}.hello-tx;
+        };
 
         # ── default: full Haskell + SDR + analysis shell ──────────────────────
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
