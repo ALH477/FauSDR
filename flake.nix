@@ -17,41 +17,60 @@
           config.allowUnfree = false;
         };
 
+        # ── Haskell package (NEW) ─────────────────────────────────────────────
+        #
+        # Builds dcf-faust-sdr from haskell/ so other flakes can consume it as
+        # an input.  DeMoD-Note adds this flake as an input and pulls
+        # inputs.dcf-faust-sdr.packages.${system}.default into its build.
+        #
+        # The package needs the C++ cbits (faust_bridge, soapy_bridge) so we
+        # add SoapySDR, Faust, and FFTW to extraLibraries / pkg-config path.
+        haskellPackages = pkgs.haskellPackages.override {
+          overrides = hself: hsuper: {
+            # dcf-faust-sdr is the cabal package living in haskell/
+            dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
+              # C libraries threaded through to cabal's configure step
+              SoapySDR  = pkgs.soapysdr-with-community-support;
+              faust     = pkgs.faust;
+              fftw3f    = pkgs.fftwFloat;
+              jack2     = pkgs.jack2;
+            };
+          };
+        };
+
+        dcfPackage = haskellPackages.dcf-faust-sdr;
+
         # ── Rust toolchain ────────────────────────────────────────────────────
-        # Stable release with cross-compile targets for embedded music hardware.
-        # See PLAN.md Stream 5: RP2040 + CC1101 @ 900 MHz.
         rustToolchain = pkgs.rust-bin.stable.latest.default.override {
           extensions = [ "rust-src" "rust-analyzer" "clippy" "rustfmt" ];
           targets = [
             "x86_64-unknown-linux-gnu"
-            "thumbv6m-none-eabi"          # RP2040 (Cortex-M0+)
-            "thumbv7em-none-eabihf"       # STM32F4/F7 (Cortex-M4/M7 with FPU)
-            "riscv32imac-unknown-none-elf" # RISC-V bare metal
+            "thumbv6m-none-eabi"
+            "thumbv7em-none-eabihf"
+            "riscv32imac-unknown-none-elf"
           ];
         };
 
         # ── SDR hardware support ──────────────────────────────────────────────
         sdrModules = with pkgs; [
-          soapysdr-with-community-support  # RTL-SDR, HackRF, LimeSDR, PlutoSDR, USRP
-          rtl-sdr                          # RTL2832U raw access + udev rules
-          hackrf                           # HackRF One TX/RX
-          uhd                              # USRP hardware driver
-          limesuite                        # LimeSDR support
+          soapysdr-with-community-support
+          rtl-sdr
+          hackrf
+          uhd
+          limesuite
         ];
 
         # ── DSP and signal processing ─────────────────────────────────────────
         dspStack = with pkgs; [
-          faust                 # Faust compiler: faust, faust2*, faust2pd
-          faustlive             # Live JIT Faust environment
-          liquid-dsp            # Reference DSP: NCO, filters, modems, equalizers
-          fftwFloat             # FFTW3 single-precision: FFT, correlation, convolution
-          volk                  # SIMD-accelerated DSP kernels
-          codec2                # Codec2 / FreeDV: open HF voice codec
+          faust
+          faustlive
+          liquid-dsp
+          fftwFloat
+          volk
+          codec2
         ];
 
         # ── C/C++ toolchain ───────────────────────────────────────────────────
-        # Clang 17 matches the LLVM version embedded in libfaust, preventing
-        # ABI mismatches when linking Faust-generated C++ against libfaust JIT.
         cppTools = with pkgs; [
           clang_17
           llvm_17
@@ -60,25 +79,25 @@
           ninja
           pkg-config
           gnumake
-          clang-tools_17        # clangd LSP, clang-format, clang-tidy
+          clang-tools_17
         ];
 
         # ── RF analysis and signal capture ────────────────────────────────────
         analysisTools = with pkgs; [
-          gnuradio              # Flowgraph IDE, spectrum sink, OOT block sandbox
-          inspectrum            # IQ file viewer (.cf32 .cs16 .cu8)
-          gqrx                  # SDR receiver + waterfall GUI
-          sox                   # Audio swiss-army knife; WAV<->raw conversion
-          baudline              # High-resolution time/frequency display
+          gnuradio
+          inspectrum
+          gqrx
+          sox
+          baudline
           gdb
           valgrind
           linuxPackages.perf
-          hotspot               # perf flamegraph viewer
-          hyperfine             # CLI benchmark harness
-          hexyl                 # Colourised hex dump — frame inspection
+          hotspot
+          hyperfine
+          hexyl
           xxd
-          socat                 # IPC testing: named-pipe loopback for frame exchange
-          ncat                  # Frame injection over UDP/TCP for integration tests
+          socat
+          ncat
         ];
 
         # ── Python RF scripting ───────────────────────────────────────────────
@@ -86,7 +105,7 @@
           numpy
           scipy
           matplotlib
-          pyserial              # UART/USB serial for hardware bringup
+          pyserial
         ]);
 
         # ── Shared shell hook ─────────────────────────────────────────────────
@@ -100,7 +119,7 @@
           export PROJECT_ROOT="$(pwd)"
           export DEMOD_DSP_DIR="$PROJECT_ROOT/dsp"
           export DEMOD_BUILD_DIR="$PROJECT_ROOT/build"
-          export LIBUSB_DEBUG=0   # suppress RTL-SDR USB verbosity during dev
+          export LIBUSB_DEBUG=0
 
           echo ""
           echo "  ╔═══════════════════════════════════════════════════════╗"
@@ -110,6 +129,8 @@
           echo "  ║  Clang $(clang --version 2>&1 | head -1 | awk '{print $3}')                             ║"
           echo "  ║  Rust  $(rustc --version 2>/dev/null | awk '{print $2}')                             ║"
           echo "  ╚═══════════════════════════════════════════════════════╝"
+          echo ""
+          echo "  packages.default = dcf-faust-sdr (Haskell library)"
           echo ""
           echo "  Modulator DSP files (dsp/):"
           echo "    modulator.dsp       BPSK-PM autonomous (no ext input)"
@@ -135,7 +156,6 @@
           echo "    crc-check           compute DCF CRC-CCITT over stdin bytes"
           echo ""
 
-          # Faust compile helper
           _fc() {
             local src="$DEMOD_DSP_DIR/$1" arch="${2:-$PROJECT_ROOT/arch/soapy-sdr-lib.cpp}" out="$DEMOD_BUILD_DIR/$3"
             mkdir -p "$DEMOD_BUILD_DIR"
@@ -143,7 +163,6 @@
             faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out" && echo "  OK" || echo "  FAILED"
           }
 
-          # Modulator compile aliases
           alias faust-bpsk='_fc modulator.dsp $PROJECT_ROOT/arch/soapy-sdr.cpp modulator_gen.cpp'
           alias faust-bpsk-hs='_fc modulator_hs.dsp "" modulator_hs_gen.cpp'
           alias faust-qpsk='_fc qpsk_mod.dsp "" qpsk_mod_gen.cpp'
@@ -151,14 +170,12 @@
           alias faust-ask='_fc ask_mod.dsp "" ask_mod_gen.cpp'
           alias faust-fsk='_fc fsk_mod.dsp "" fsk_mod_gen.cpp'
 
-          # Demodulator compile aliases
           alias faust-bpsk-demod='_fc bpsk_demod.dsp "" bpsk_demod_gen.cpp'
           alias faust-qpsk-demod='_fc qpsk_demod.dsp "" qpsk_demod_gen.cpp'
           alias faust-gmsk-demod='_fc gmsk_demod.dsp "" gmsk_demod_gen.cpp'
           alias faust-ask-demod='_fc ask_demod.dsp "" ask_demod_gen.cpp'
           alias faust-fsk-demod='_fc fsk_demod.dsp "" fsk_demod_gen.cpp'
 
-          # Batch aliases
           alias faust-all-mod='for m in modulator_hs qpsk_mod gmsk_mod ask_mod fsk_mod; do _fc ${m}.dsp "" ${m}_gen.cpp; done'
           alias faust-all-demod='for d in bpsk_demod qpsk_demod gmsk_demod ask_demod fsk_demod; do _fc ${d}.dsp "" ${d}_gen.cpp; done'
 
@@ -175,7 +192,6 @@ for b in d:
 print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
 "'
 
-          # Scaffold on first entry
           if [ ! -f .demod-sdr-init ]; then
             echo "  Scaffolding project layout..."
             mkdir -p src arch dsp transport build captures
@@ -185,7 +201,38 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
 
       in {
 
-        # ── default: full dev shell ───────────────────────────────────────────
+        # ── packages (NEW) ────────────────────────────────────────────────────
+        #
+        # Exposed so DeMoD-Note (and any other consumer) can write:
+        #
+           inputs.dcf-faust-sdr.url = "github:ALH477/FauSDR?dir=haskell";
+        #
+        # and then reference inputs.dcf-faust-sdr.packages.${system}.default
+        # or use the overlay below.
+        packages = {
+          default = dcfPackage;
+          dcf-faust-sdr = dcfPackage;
+        };
+
+        # ── overlay (NEW) ─────────────────────────────────────────────────────
+        #
+        # Lets consumers do:
+        #   nixpkgs.overlays = [ inputs.dcf-faust-sdr.overlays.default ];
+        # and then reference pkgs.haskellPackages.dcf-faust-sdr normally.
+        overlays.default = final: prev: {
+          haskellPackages = prev.haskellPackages.override {
+            overrides = hself: hsuper: {
+              dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
+                SoapySDR = final.soapysdr-with-community-support;
+                faust    = final.faust;
+                fftw3f   = final.fftwFloat;
+                jack2    = final.jack2;
+              };
+            };
+          };
+        };
+
+        # ── devShells (unchanged) ─────────────────────────────────────────────
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           name = "demod-faust-sdr";
           packages = dspStack ++ cppTools ++ analysisTools ++ sdrModules ++ [
@@ -194,35 +241,37 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
             pkgs.ripgrep
             pkgs.fd
             pkgs.jq
+            # Also expose the Haskell package in the dev shell so you can
+            # ghci / cabal repl against it directly from here.
+            dcfPackage
           ];
           inherit shellHook;
           NIX_CFLAGS_COMPILE = "-I${pkgs.llvm_17.dev}/include";
           NIX_LDFLAGS        = "-L${pkgs.llvm_17}/lib -L${pkgs.liquid-dsp}/lib";
         };
 
-        # ── headless: CI / remote server — no GUI tools ───────────────────────
         devShells.headless = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           name = "demod-faust-sdr-headless";
           packages = dspStack ++ cppTools ++ sdrModules ++ [
             rustToolchain
             pkgs.python311
             pkgs.hexyl pkgs.xxd pkgs.socat
+            dcfPackage
           ];
           inherit shellHook;
           NIX_CFLAGS_COMPILE = "-I${pkgs.llvm_17.dev}/include";
           NIX_LDFLAGS        = "-L${pkgs.llvm_17}/lib -L${pkgs.liquid-dsp}/lib";
         };
 
-        # ── embedded: RP2040 + CC1101 cross-compile (PLAN.md Stream 5) ───────
         devShells.embedded = pkgs.mkShell {
           name = "demod-embedded";
           packages = with pkgs; [
             rustToolchain
-            gcc-arm-embedded   # arm-none-eabi-{gcc,gdb,objcopy,...}
-            openocd            # SWD debug probe server
-            probe-rs           # Rust-native flashing + RTT logging
-            cargo-embed        # probe-rs frontend (reads Embed.toml)
-            minicom            # Serial monitor for UART output
+            gcc-arm-embedded
+            openocd
+            probe-rs
+            cargo-embed
+            minicom
             hexyl xxd
           ];
           shellHook = ''
