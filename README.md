@@ -14,13 +14,13 @@ Two codebases. One stack. A Haskell/Faust/SoapySDR RF TX/RX pipeline and a polyg
 
 ```
 demod/
-├── flake.nix                    # Root Nix dev shell (C++ path)
+├── flake.nix                    # Root Nix dev shell (demod-faust-sdr-env, -lang rust backend)
 ├── CMakeLists.txt               # C++ build (arch + transport tests)
 ├── arch/
-│   ├── soapy-sdr.cpp            # Standalone arch with main() (modulator.dsp only)
+│   ├── soapy-sdr.cpp            # Standalone arch with main() (modulator_hs.dsp only)
 │   └── soapy-sdr-lib.cpp        # Library arch, no main() (all modem DSP files)
 ├── dsp/                         # Faust DSP modem library (14 files)
-│   ├── modulator.dsp            # Autonomous BPSK-PM modulator (standalone C++ path)
+│   ├── modulator_hs.dsp         # BPSK-PM modulator — Haskell FFI path (1-in 2-out IQ)
 │   ├── qpsk_mod.dsp             # QPSK modulator  (2 bps, Gray-coded)
 │   ├── gmsk_mod.dsp             # GMSK modulator  (constant envelope, BT=0.3)
 │   ├── fsk_mod.dsp              # FSK modulator   (h=0.5–2.0, CP via phasor NCO)
@@ -72,7 +72,7 @@ demod/
 │   │   ├── FrameSpec.hs
 │   │   ├── JackFrameSpec.hs     # JackFrame round-trip + CRC pin 0xC23F
 │   │   └── ConformanceSpec.hs   # Cross-language CRC pin + reference vector
-│   └── dsp/modulator_hs.dsp    # Faust TX DSP (63-tap RRC FIR, 1-in 2-out)
+│   └── dsp/modulator_hs.dsp    # Faust TX DSP (63-tap RRC FIR, 1-in 2-out) → modulator_hs_gen.rs
 │
 ├── hydramesh.lisp               # HydraMesh v2.2.0 UDP SDK + DCF frame adapter
 │
@@ -123,7 +123,7 @@ demod/
 └──────────────────────────┼──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
-│  Faust  (modulator_hs.dsp → faust_bridge.cpp)                    │
+│  Faust  (modulator_hs.dsp → modulator_hs_gen.rs, Rust FFI)       │
 │                                                                  │
 │  inputs[0]: symbol stream (±1.0 NRZ)                            │
 │  → 63-tap Kaiser-windowed RRC FIR (α=0.35, β=8.0)              │
@@ -148,7 +148,7 @@ demod/
 └──────────────────────────┼──────────────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────────────┐
-│  Faust  (bpsk_demod.dsp → faust_bridge.cpp)                      │
+│  Faust  (bpsk_demod.dsp → bpsk_demod_gen.rs, Rust FFI)           │
 │                                                                  │
 │  inputs[0]=I, inputs[1]=Q                                        │
 │  → Costas loop (2nd-order, ζ=0.707) — carrier recovery          │
@@ -280,7 +280,7 @@ msg_id_len(1) msg_id(I)
 
 ```bash
 cd haskell && nix develop
-faust-build       # compile modulator_hs.dsp → C++ (once per DSP change)
+faust-all-mod     # compile all modulator DSP files → *_gen.rs (once per DSP change)
 cabal-build && cabal-test
 cabal run demod-sdr-hs -- --driver rtlsdr --freq 433.92e6 --rate 2e6 --gain 20
 ```
@@ -297,7 +297,7 @@ cabal run demod-rx-hs -- --driver rtlsdr --freq 433.92e6 --rate 2e6 --gain 40
 ```bash
 nix develop
 cmake -B build -G Ninja
-cmake --build build --target faust-compile   # all 10 DSP files
+faust-all-mod && faust-all-demod && faust-all-audio   # compile all DSP → *_gen.rs
 cmake --build build
 ctest --test-dir build -V                    # conformance + frame tests
 ./build/demod-sdr
@@ -346,10 +346,7 @@ Transmits JackFrame data as audible two-tone FSK. Sounds like a dial-up modem. W
 cd haskell && nix develop
 
 # 1. Compile the acoustic DSP (once per change):
-faust -a ../arch/soapy-sdr-lib.cpp -lang c++ -vec -vs 256 \
-      dsp/acoustic_fsk_mod.dsp   -o build/acoustic_fsk_mod_gen.cpp
-faust -a ../arch/soapy-sdr-lib.cpp -lang c++ -vec -vs 256 \
-      dsp/acoustic_fsk_demod.dsp -o build/acoustic_fsk_demod_gen.cpp
+faust-all-audio   # compiles acoustic_fsk_mod.dsp + acoustic_fsk_demod.dsp → *_gen.rs
 
 # 2. Build:
 cabal build acoustic-hello-tx acoustic-hello-rx
@@ -388,6 +385,11 @@ pactl load-module module-loopback source=loopback.monitor
 | `/bpsk_demod/symbol_rate` | `9600` | `300–115200` | Must match TX |
 | `/bpsk_demod/loop_bw` | `0.02` | `0.001–0.1` | Costas loop BW |
 | `/bpsk_demod/output_gain` | `1.0` | `0–4.0` | Soft symbol scale |
+| `/qpsk_demod/symbol_rate` | `28800` | `300–115200` | Must match TX |
+| `/qpsk_demod/loop_bw` | `0.02` | `0.001–0.1` | 4-phase Costas loop BW |
+| `/qpsk_demod/output_gain` | `1.0` | `0–4.0` | Soft symbol scale |
+| `/jack_demod/loop_bw` | `0.03` | `0.001–0.1` | Guitar-cable Costas BW |
+| `/acoustic_fsk_demod/agc_tc` | `0.05` | — | AGC time constant (50 ms) |
 
 ---
 
@@ -443,9 +445,10 @@ ITransport* dcf_transport_create(void) {
 
 | Shell | Command | Includes |
 |-------|---------|----------|
-| Haskell full | `cd haskell && nix develop` | GHC 9.6, HLS, cabal, Faust, SoapySDR, GNURadio, inspectrum |
+| Haskell full | `cd haskell && nix develop` | GHC 9.6, HLS, cabal, Faust 2.83, SoapySDR, GNURadio, inspectrum |
 | Haskell headless | `cd haskell && nix develop .#headless` | GHC, cabal, Faust, SoapySDR |
 | Modem dev | `cd haskell && nix develop .#modem-dev` | Headless + liquid-dsp, codec2, minimodem, sox, baudline |
+| Faust SDR | `nix develop` (root, `demod-faust-sdr-env`) | Faust 2.83 (-lang rust), liquid-dsp, FFTW, VOLK, codec2, SoapySDR |
 | C++ full | `nix develop` (root) | clang17, cmake, Faust, SoapySDR, GNURadio, inspectrum |
 | C++ headless | `nix develop .#headless` | clang17, cmake, Faust, SoapySDR |
 | Embedded | `nix develop .#embedded` | ARM cross-compiler, avr-gcc, openocd |
@@ -463,6 +466,23 @@ ITransport* dcf_transport_create(void) {
 | Python | — | ✓ ABC/importlib | ✓ TLV encode/decode | — | Core complete |
 | Go | ✓ | — | — | — | Frame codec complete |
 | GNU Radio OOT | ✓ (Python) | — | ✓ byte stream | — | Sink + source complete |
+
+---
+
+## Faust 2.73+ Migration Notes
+
+All DSP files were migrated from pre-2.73 Faust syntax to Faust 2.83 (`nixpkgs` binary):
+
+| Old syntax | Replacement | Files affected |
+|------------|-------------|----------------|
+| `let { 'x = ...; } in expr` | `with {}` local bindings | all demod files |
+| `letrec { 'x = ...; } in expr` | `pll_core_*` function + `~ (_, _)` | `bpsk_demod`, `qpsk_demod`, `jack_demod` |
+| `'x = expr` (prime recursive binding) | `pll_core_*` state-machine function | Costas loop files |
+| `\(a, b) -> expr` (lambda) | named `with {}` local function | `acoustic_fsk_demod` |
+| Trailing comma in `waveform{}` | removed | `qpsk_mod`, all demod files with RRC tables |
+| `-lang c++` backend | `-lang rust` | `flake.nix` (C++ backend not compiled in nixpkgs binary) |
+
+Costas loop PLL architecture: all three Costas loop implementations (`bpsk_demod`, `qpsk_demod`, `jack_demod`) were rewritten using a `pll_core_*(i_s, q_s, ph, fi)` state-transition function whose `with{}` bindings only reference its own arguments (no mutual cross-references), combined with `~ (_, _)` to feed `(ph_new, fi_new)` back as `(ph, fi)` with one sample of delay. This avoids the definitional cycle that Faust's term-rewriting evaluator cannot resolve when `with{}` bindings reference each other.
 
 ---
 
