@@ -9,6 +9,29 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+    # ── System-independent outputs ────────────────────────────────────────────
+    #
+    # overlays must live OUTSIDE eachDefaultSystem — they are not per-system.
+    # Consumers add this to nixpkgs.overlays to get pkgs.haskellPackages.dcf-faust-sdr:
+    #
+    #   inputs.dcf-faust-sdr.url = "github:ALH477/FauSDR";
+    #   nixpkgs.overlays = [ inputs.dcf-faust-sdr.overlays.default ];
+    {
+      overlays.default = final: prev: {
+        haskellPackages = prev.haskellPackages.override {
+          overrides = hself: _hsuper: {
+            dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
+              SoapySDR = final.soapysdr-with-community-support;
+              faust    = final.faust;
+              fftw3f   = final.fftwFloat;
+              jack2    = final.jack2;
+            };
+          };
+        };
+      };
+    }
+    //
+    # ── Per-system outputs ────────────────────────────────────────────────────
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -17,23 +40,18 @@
           config.allowUnfree = false;
         };
 
-        # ── Haskell package (NEW) ─────────────────────────────────────────────
+        # ── Haskell package ───────────────────────────────────────────────────
         #
         # Builds dcf-faust-sdr from haskell/ so other flakes can consume it as
-        # an input.  DeMoD-Note adds this flake as an input and pulls
-        # inputs.dcf-faust-sdr.packages.${system}.default into its build.
-        #
-        # The package needs the C++ cbits (faust_bridge, soapy_bridge) so we
-        # add SoapySDR, Faust, and FFTW to extraLibraries / pkg-config path.
+        # an input.  The package needs the C++ cbits (faust_bridge, soapy_bridge)
+        # so we add SoapySDR, Faust, FFTW, and JACK to the configure step.
         haskellPackages = pkgs.haskellPackages.override {
-          overrides = hself: hsuper: {
-            # dcf-faust-sdr is the cabal package living in haskell/
+          overrides = hself: _hsuper: {
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
-              # C libraries threaded through to cabal's configure step
-              SoapySDR  = pkgs.soapysdr-with-community-support;
-              faust     = pkgs.faust;
-              fftw3f    = pkgs.fftwFloat;
-              jack2     = pkgs.jack2;
+              SoapySDR = pkgs.soapysdr-with-community-support;
+              faust    = pkgs.faust;
+              fftw3f   = pkgs.fftwFloat;
+              jack2    = pkgs.jack2;
             };
           };
         };
@@ -100,6 +118,17 @@
           ncat
         ];
 
+        # ── Acoustic modem tools ──────────────────────────────────────────────
+        acousticTools = with pkgs; [
+          sox          # raw f32 → audio output (quick test without JACK)
+          baudline     # spectrum analyser — verify 2/3 kHz tones
+          minimodem    # reference modem for comparison / sanity check
+          jack2        # JACK audio server
+          pipewire     # PipeWire (ArchibaldOS default)
+          pw-inspector # PipeWire inspection tool
+          patchage     # JACK patchbay GUI
+        ];
+
         # ── Python RF scripting ───────────────────────────────────────────────
         pythonEnv = pkgs.python311.withPackages (ps: with ps; [
           numpy
@@ -132,37 +161,52 @@
           echo ""
           echo "  packages.default = dcf-faust-sdr (Haskell library)"
           echo ""
-          echo "  Modulator DSP files (dsp/):"
-          echo "    modulator.dsp       BPSK-PM autonomous (no ext input)"
-          echo "    modulator_hs.dsp    BPSK-PM symbol-stream input (Haskell)"
-          echo "    qpsk_mod.dsp        QPSK — 2 bits/symbol, +3dB spectral efficiency"
-          echo "    gmsk_mod.dsp        GMSK BT=0.3 — constant envelope, phone-grade"
-          echo "    ask_mod.dsp         OOK/ASK — simple amplitude keying"
-          echo "    fsk_mod.dsp         FSK — configurable deviation"
-          echo "  Demodulator DSP files (dsp/):"
-          echo "    bpsk_demod.dsp      BPSK Costas loop + matched filter"
-          echo "    qpsk_demod.dsp      QPSK Costas loop + decision"
-          echo "    gmsk_demod.dsp      GMSK limiter-discriminator"
-          echo "    ask_demod.dsp       OOK envelope detector + slicer"
-          echo "    fsk_demod.dsp       FSK discriminator (phase derivative)"
+          echo "  RF Modulator DSP (dsp/):"
+          echo "    modulator.dsp           BPSK-PM autonomous (standalone)"
+          echo "    modulator_hs.dsp        BPSK-PM symbol-stream input (Haskell)"
+          echo "    qpsk_mod.dsp            QPSK — 2 bits/symbol"
+          echo "    gmsk_mod.dsp            GMSK BT=0.3 — constant envelope"
+          echo "    ask_mod.dsp             OOK/ASK — amplitude keying"
+          echo "    fsk_mod.dsp             FSK — configurable deviation"
+          echo "  RF Demodulator DSP (dsp/):"
+          echo "    bpsk_demod.dsp          BPSK Costas loop + matched filter"
+          echo "    qpsk_demod.dsp          QPSK Costas loop + decision"
+          echo "    gmsk_demod.dsp          GMSK limiter-discriminator"
+          echo "    ask_demod.dsp           OOK envelope detector + slicer"
+          echo "    fsk_demod.dsp           FSK discriminator (phase derivative)"
+          echo "  Audio-band DSP (dsp/):"
+          echo "    jack_mod.dsp            BPSK guitar-cable TX (4 kHz, sps=10/20)"
+          echo "    jack_demod.dsp          BPSK guitar-cable RX"
+          echo "    acoustic_fsk_mod.dsp    FSK acoustic TX (2/3 kHz, 1200 baud)"
+          echo "    acoustic_fsk_demod.dsp  FSK acoustic RX (dual-BPF energy)"
           echo ""
           echo "  Aliases:"
-          echo "    faust-<scheme>      compile one DSP file  (e.g. faust-qpsk)"
-          echo "    faust-all-mod       compile all modulators"
-          echo "    faust-all-demod     compile all demodulators"
-          echo "    sdr-probe           enumerate attached SDR devices"
-          echo "    iq-plot <file>      open .cf32 in inspectrum"
-          echo "    frame-rx            hex-dump 17-byte frames from stdin"
-          echo "    crc-check           compute DCF CRC-CCITT over stdin bytes"
+          echo "    faust-<scheme>          compile one DSP file  (e.g. faust-qpsk)"
+          echo "    faust-all-mod           compile all RF modulators"
+          echo "    faust-all-demod         compile all RF demodulators"
+          echo "    faust-acoustic-mod      compile acoustic_fsk_mod.dsp"
+          echo "    faust-acoustic-demod    compile acoustic_fsk_demod.dsp"
+          echo "    faust-jack-mod          compile jack_mod.dsp"
+          echo "    faust-jack-demod        compile jack_demod.dsp"
+          echo "    sdr-probe               enumerate attached SDR devices"
+          echo "    iq-plot <file>          open .cf32 in inspectrum"
+          echo "    frame-rx                hex-dump 17-byte DCF frames from stdin"
+          echo "    jf-rx                   hex-dump 8-byte JackFrames from stdin"
+          echo "    crc-check               CRC-CCITT over stdin bytes (DCF, 15 bytes)"
+          echo "    jf-crc-check            CRC-CCITT over stdin bytes (JackFrame, 6 bytes)"
           echo ""
 
           _fc() {
-            local src="$DEMOD_DSP_DIR/$1" arch="${2:-$PROJECT_ROOT/arch/soapy-sdr-lib.cpp}" out="$DEMOD_BUILD_DIR/$3"
+            local src="$DEMOD_DSP_DIR/$1"
+            local arch="$2"
+            local out="$DEMOD_BUILD_DIR/$3"
+            if [ -z "$arch" ]; then arch="$PROJECT_ROOT/arch/soapy-sdr-lib.cpp"; fi
             mkdir -p "$DEMOD_BUILD_DIR"
             echo "  faust: $1 → $(basename $out)"
             faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out" && echo "  OK" || echo "  FAILED"
           }
 
+          # RF modulators
           alias faust-bpsk='_fc modulator.dsp $PROJECT_ROOT/arch/soapy-sdr.cpp modulator_gen.cpp'
           alias faust-bpsk-hs='_fc modulator_hs.dsp "" modulator_hs_gen.cpp'
           alias faust-qpsk='_fc qpsk_mod.dsp "" qpsk_mod_gen.cpp'
@@ -170,26 +214,49 @@
           alias faust-ask='_fc ask_mod.dsp "" ask_mod_gen.cpp'
           alias faust-fsk='_fc fsk_mod.dsp "" fsk_mod_gen.cpp'
 
+          # RF demodulators
           alias faust-bpsk-demod='_fc bpsk_demod.dsp "" bpsk_demod_gen.cpp'
           alias faust-qpsk-demod='_fc qpsk_demod.dsp "" qpsk_demod_gen.cpp'
           alias faust-gmsk-demod='_fc gmsk_demod.dsp "" gmsk_demod_gen.cpp'
           alias faust-ask-demod='_fc ask_demod.dsp "" ask_demod_gen.cpp'
           alias faust-fsk-demod='_fc fsk_demod.dsp "" fsk_demod_gen.cpp'
 
-          alias faust-all-mod='for m in modulator_hs qpsk_mod gmsk_mod ask_mod fsk_mod; do _fc ${m}.dsp "" ${m}_gen.cpp; done'
-          alias faust-all-demod='for d in bpsk_demod qpsk_demod gmsk_demod ask_demod fsk_demod; do _fc ${d}.dsp "" ${d}_gen.cpp; done'
+          # Audio-band DSP
+          alias faust-jack-mod='_fc jack_mod.dsp "" jack_mod_gen.cpp'
+          alias faust-jack-demod='_fc jack_demod.dsp "" jack_demod_gen.cpp'
+          alias faust-acoustic-mod='_fc acoustic_fsk_mod.dsp "" acoustic_fsk_mod_gen.cpp'
+          alias faust-acoustic-demod='_fc acoustic_fsk_demod.dsp "" acoustic_fsk_demod_gen.cpp'
 
+          # Batch compile
+          alias faust-all-mod='for m in modulator_hs qpsk_mod gmsk_mod ask_mod fsk_mod; do _fc ''${m}.dsp "" ''${m}_gen.cpp; done'
+          alias faust-all-demod='for d in bpsk_demod qpsk_demod gmsk_demod ask_demod fsk_demod; do _fc ''${d}.dsp "" ''${d}_gen.cpp; done'
+          alias faust-all-audio='for f in jack_mod jack_demod acoustic_fsk_mod acoustic_fsk_demod; do _fc ''${f}.dsp "" ''${f}_gen.cpp; done'
+
+          # SDR + analysis
           alias sdr-probe='SoapySDRUtil --probe'
           alias iq-plot='inspectrum'
           alias frame-rx='xxd -c 17 -g 1'
+          alias jf-rx='xxd -c 8 -g 1'
+
           alias crc-check='python3 -c "
-import sys,struct
+import sys
 d=sys.stdin.buffer.read(15)
 crc=0xFFFF
 for b in d:
     crc^=b<<8
     for _ in range(8): crc=((crc<<1)^0x1021)&0xFFFF if crc&0x8000 else (crc<<1)&0xFFFF
-print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
+print(f\"DCF CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
+"'
+
+          alias jf-crc-check='python3 -c "
+import sys
+d=sys.stdin.buffer.read(6)
+crc=0xFFFF
+for b in d:
+    crc^=b<<8
+    for _ in range(8): crc=((crc<<1)^0x1021)&0xFFFF if crc&0x8000 else (crc<<1)&0xFFFF
+print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
+print(f\"    pin check: {\\\"PASS\\\" if crc==0xC23F else \\\"FAIL (expected 0xC23F for ref vector)\\\"}\" )
 "'
 
           if [ ! -f .demod-sdr-init ]; then
@@ -201,38 +268,15 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
 
       in {
 
-        # ── packages (NEW) ────────────────────────────────────────────────────
-        #
-        # Exposed so DeMoD-Note (and any other consumer) can write:
-        #
-           inputs.dcf-faust-sdr.url = "github:ALH477/FauSDR?dir=haskell";
-        #
-        # and then reference inputs.dcf-faust-sdr.packages.${system}.default
-        # or use the overlay below.
+        # ── Packages ──────────────────────────────────────────────────────────
         packages = {
-          default = dcfPackage;
+          default       = dcfPackage;
           dcf-faust-sdr = dcfPackage;
         };
 
-        # ── overlay (NEW) ─────────────────────────────────────────────────────
-        #
-        # Lets consumers do:
-        #   nixpkgs.overlays = [ inputs.dcf-faust-sdr.overlays.default ];
-        # and then reference pkgs.haskellPackages.dcf-faust-sdr normally.
-        overlays.default = final: prev: {
-          haskellPackages = prev.haskellPackages.override {
-            overrides = hself: hsuper: {
-              dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
-                SoapySDR = final.soapysdr-with-community-support;
-                faust    = final.faust;
-                fftw3f   = final.fftwFloat;
-                jack2    = final.jack2;
-              };
-            };
-          };
-        };
+        # ── Dev shells ────────────────────────────────────────────────────────
 
-        # ── devShells (unchanged) ─────────────────────────────────────────────
+        # Full shell: everything including GUI tools and GNU Radio
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           name = "demod-faust-sdr";
           packages = dspStack ++ cppTools ++ analysisTools ++ sdrModules ++ [
@@ -241,8 +285,6 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
             pkgs.ripgrep
             pkgs.fd
             pkgs.jq
-            # Also expose the Haskell package in the dev shell so you can
-            # ghci / cabal repl against it directly from here.
             dcfPackage
           ];
           inherit shellHook;
@@ -250,6 +292,7 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
           NIX_LDFLAGS        = "-L${pkgs.llvm_17}/lib -L${pkgs.liquid-dsp}/lib";
         };
 
+        # Headless: no GUI, for CI or SSH sessions
         devShells.headless = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
           name = "demod-faust-sdr-headless";
           packages = dspStack ++ cppTools ++ sdrModules ++ [
@@ -263,6 +306,22 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
           NIX_LDFLAGS        = "-L${pkgs.llvm_17}/lib -L${pkgs.liquid-dsp}/lib";
         };
 
+        # Modem dev: acoustic FSK focus — sox, baudline, minimodem, JACK, PipeWire
+        devShells.modem-dev = pkgs.mkShell.override { stdenv = pkgs.clangStdenv; } {
+          name = "demod-modem-dev";
+          packages = dspStack ++ cppTools ++ sdrModules ++ acousticTools ++ [
+            rustToolchain
+            pythonEnv
+            pkgs.ripgrep
+            pkgs.hexyl pkgs.xxd
+            dcfPackage
+          ];
+          inherit shellHook;
+          NIX_CFLAGS_COMPILE = "-I${pkgs.llvm_17.dev}/include";
+          NIX_LDFLAGS        = "-L${pkgs.llvm_17}/lib -L${pkgs.liquid-dsp}/lib";
+        };
+
+        # Embedded cross-compile: RP2040, STM32, RISC-V bare metal
         devShells.embedded = pkgs.mkShell {
           name = "demod-embedded";
           packages = with pkgs; [
@@ -284,6 +343,7 @@ print(f\"CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}\")
             echo ""
             echo "  Targets: thumbv6m-none-eabi   (RP2040 Cortex-M0+)"
             echo "           thumbv7em-none-eabihf (STM32F4 Cortex-M4F)"
+            echo "           riscv32imac-unknown-none-elf"
             echo ""
             echo "  cargo build --target thumbv6m-none-eabi --release"
             echo "  cargo embed --target thumbv6m-none-eabi"
