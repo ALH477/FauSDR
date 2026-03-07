@@ -1,0 +1,17 @@
+cabal-version:  >= 1.8
+name:           mtl-evil-instances
+version:        0.1
+synopsis:       Instances for the mtl classes for all monad transformers (GHC 9.x patch)
+license:        BSD3
+build-type:     Simple
+
+library
+  hs-source-dirs:   src
+  exposed-modules:  Control.Monad.Instances.Evil
+  build-depends:
+      base              >= 4
+    , mtl               >= 2.2
+    , transformers      >= 0.4
+    , transformers-base >= 0.4
+    , monad-control     >= 1.0
+  ghc-options: -Wall -fno-warn-orphans
