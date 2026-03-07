@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ModDemod Analyzer — DeMoD Audio Systems</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:       #03060a;
+  --panel-bg: #05100c;
+  --grid:     #0b2018;
+  --border:   #0d3020;
+  --phosphor: #2dff8a;
+  --ph-glow:  rgba(45,255,138,0.4);
+  --ph-dim:   #1a6a45;
+  --amber:    #ffb800;
+  --amber-dim:#5a4000;
+  --cyan:     #00e5ff;
+  --red:      #ff3355;
+  --purple:   #cc66ff;
+  --text:     #7ac4a0;
+  --text-dim: #2a5040;
+  --white:    #d0f0e8;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Share Tech Mono',monospace;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  overflow-x:hidden;
+}
+
+/* ── HEADER ──────────────────────────────────────────────────── */
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;
+  border-bottom:1px solid var(--border);
+  background:linear-gradient(180deg,#050f08 0%,#030608 100%);
+}
+.logo{
+  font-family:'Orbitron',sans-serif;
+  font-size:22px;font-weight:900;letter-spacing:4px;
+  color:var(--phosphor);
+  text-shadow:0 0 20px var(--ph-glow),0 0 40px rgba(45,255,138,0.2);
+}
+.subtitle{font-size:11px;color:var(--ph-dim);letter-spacing:3px;margin-top:2px;}
+.badge{
+  font-size:10px;color:var(--amber);border:1px solid var(--amber-dim);
+  padding:4px 10px;letter-spacing:2px;
+  background:rgba(255,184,0,0.05);
+}
+
+/* ── MAIN LAYOUT ─────────────────────────────────────────────── */
+.main{display:flex;flex:1;gap:0;}
+
+/* ── VIZ AREA ────────────────────────────────────────────────── */
+.viz-area{
+  flex:1;padding:20px 16px 16px;
+  display:flex;flex-direction:column;gap:14px;
+}
+
+/* ── SIGNAL FLOW ROW ─────────────────────────────────────────── */
+.flow-row{
+  display:flex;align-items:stretch;gap:0;
+}
+.stage-wrap{
+  flex:1;display:flex;flex-direction:column;align-items:center;
+}
+.stage-label{
+  font-size:10px;letter-spacing:3px;color:var(--amber);
+  margin-bottom:6px;text-align:center;
+}
+.stage-box{
+  width:100%;position:relative;
+  background:var(--panel-bg);
+  border:1px solid var(--border);
+  overflow:hidden;
+}
+.stage-box canvas{display:block;width:100%;height:120px;}
+.stage-eq{
+  font-size:9px;color:var(--ph-dim);text-align:center;
+  padding:4px 4px 6px;letter-spacing:1px;
+  border-top:1px solid var(--grid);
+}
+
+.operator{
+  display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:0 6px;
+  min-width:52px;
+}
+.op-symbol{
+  font-family:'Orbitron',sans-serif;
+  font-size:13px;font-weight:700;
+  color:var(--cyan);
+  text-shadow:0 0 10px rgba(0,229,255,0.5);
+  text-align:center;
+  line-height:1.3;
+}
+.op-arrow{color:var(--text-dim);font-size:20px;margin-top:4px;}
+
+/* ── WAVEFORM ROW ────────────────────────────────────────────── */
+.wave-row{
+  display:flex;gap:12px;align-items:stretch;
+}
+.wave-panel{
+  flex:1;background:var(--panel-bg);
+  border:1px solid var(--border);
+  position:relative;
+}
+.wave-panel canvas{display:block;width:100%;height:90px;}
+.wave-label{
+  position:absolute;top:5px;left:8px;
+  font-size:9px;letter-spacing:2px;color:var(--ph-dim);
+}
+
+/* ── RECOVERY METER ──────────────────────────────────────────── */
+.recovery-strip{
+  display:flex;align-items:center;gap:16px;
+  background:var(--panel-bg);border:1px solid var(--border);
+  padding:10px 16px;
+}
+.rec-label{font-size:11px;letter-spacing:2px;color:var(--amber);white-space:nowrap;}
+.rec-bar-wrap{flex:1;height:16px;background:#030a06;border:1px solid var(--border);position:relative;overflow:hidden;}
+.rec-bar{height:100%;background:linear-gradient(90deg,var(--ph-dim),var(--phosphor));transition:width 0.1s;position:relative;}
+.rec-bar::after{content:'';position:absolute;right:0;top:0;bottom:0;width:2px;background:var(--white);box-shadow:0 0 8px var(--phosphor);}
+.rec-value{font-family:'Orbitron',sans-serif;font-size:14px;font-weight:700;color:var(--phosphor);min-width:56px;text-align:right;
+  text-shadow:0 0 10px var(--ph-glow);}
+.rec-db{font-size:12px;color:var(--text);min-width:60px;}
+.null-warn{font-size:11px;color:var(--red);letter-spacing:2px;
+  opacity:0;transition:opacity 0.3s;text-shadow:0 0 8px rgba(255,51,85,0.6);}
+.null-warn.visible{opacity:1;}
+
+/* ── CONTROLS PANEL ──────────────────────────────────────────── */
+.ctrl-panel{
+  width:240px;
+  border-left:1px solid var(--border);
+  background:linear-gradient(180deg,#04100a 0%,#030608 100%);
+  padding:16px;
+  display:flex;flex-direction:column;gap:14px;
+  overflow-y:auto;
+}
+.ctrl-section{
+  border:1px solid var(--border);
+  background:rgba(0,255,100,0.02);
+}
+.ctrl-head{
+  padding:6px 10px;
+  background:rgba(0,255,100,0.04);
+  border-bottom:1px solid var(--border);
+  font-size:10px;letter-spacing:3px;color:var(--amber);
+}
+.ctrl-body{padding:10px;}
+.ctrl-row{margin-bottom:12px;}
+.ctrl-row:last-child{margin-bottom:0;}
+.ctrl-row label{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-size:10px;letter-spacing:1px;color:var(--text);
+  margin-bottom:5px;
+}
+.ctrl-row label span{
+  font-family:'Orbitron',sans-serif;font-size:12px;
+  color:var(--phosphor);text-shadow:0 0 6px var(--ph-glow);
+}
+input[type=range]{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:4px;
+  background:var(--grid);
+  outline:none;cursor:pointer;border:none;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:14px;height:14px;
+  background:var(--phosphor);
+  border-radius:50%;
+  box-shadow:0 0 6px var(--ph-glow);
+  cursor:pointer;
+}
+input[type=range]::-moz-range-thumb{
+  width:14px;height:14px;
+  background:var(--phosphor);border:none;
+  border-radius:50%;
+  box-shadow:0 0 6px var(--ph-glow);
+}
+.phase-warn{
+  font-size:9px;color:var(--text-dim);
+  margin-top:4px;letter-spacing:1px;
+  transition:color 0.3s;
+}
+.phase-warn.coherent{color:var(--phosphor);}
+.phase-warn.null{color:var(--red);}
+.phase-warn.inverted{color:var(--purple);}
+
+/* Audio controls */
+.audio-btn{
+  width:100%;padding:8px;
+  background:rgba(0,229,255,0.05);
+  border:1px solid var(--cyan);
+  color:var(--cyan);
+  font-family:'Share Tech Mono',monospace;
+  font-size:11px;letter-spacing:2px;
+  cursor:pointer;
+  transition:all 0.2s;
+}
+.audio-btn:hover{background:rgba(0,229,255,0.1);}
+.audio-btn.active{
+  background:rgba(0,229,255,0.15);
+  box-shadow:0 0 12px rgba(0,229,255,0.3);
+}
+.listen-row{display:flex;gap:4px;margin-top:8px;}
+.listen-btn{
+  flex:1;padding:6px 2px;
+  background:var(--grid);
+  border:1px solid var(--border);
+  color:var(--text-dim);
+  font-family:'Share Tech Mono',monospace;
+  font-size:9px;letter-spacing:1px;
+  cursor:pointer;
+  transition:all 0.15s;
+}
+.listen-btn:hover{color:var(--text);}
+.listen-btn.active{
+  background:rgba(45,255,138,0.08);
+  border-color:var(--ph-dim);
+  color:var(--phosphor);
+}
+
+/* Formula box */
+.formula-box{
+  background:#020a04;border:1px solid var(--border);
+  padding:10px;font-size:10px;line-height:1.8;color:var(--text-dim);
+  letter-spacing:1px;
+}
+.formula-box .hl{color:var(--amber);}
+.formula-box .big{
+  font-family:'Orbitron',sans-serif;font-size:13px;
+  color:var(--phosphor);display:block;margin:6px 0;
+  text-shadow:0 0 8px var(--ph-glow);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--border);}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo">MODDEMOD ANALYZER</div>
+    <div class="subtitle">RING MODULATOR + COHERENT DEMODULATOR</div>
+  </div>
+  <div class="badge">DeMoD Audio Systems</div>
+</header>
+
+<div class="main">
+  <!-- ── VIZ AREA ───────────────────────────────────── -->
+  <div class="viz-area">
+
+    <!-- Signal flow spectra -->
+    <div class="flow-row">
+      <div class="stage-wrap">
+        <div class="stage-label">① INPUT SIGNAL</div>
+        <div class="stage-box">
+          <canvas id="c-input" height="120"></canvas>
+        </div>
+        <div class="stage-eq">x(t) = cos(2π·f<sub>in</sub>·t)</div>
+      </div>
+
+      <div class="operator">
+        <div class="op-symbol">×<br>c(t)</div>
+        <div class="op-arrow">→</div>
+      </div>
+
+      <div class="stage-wrap">
+        <div class="stage-label">② RING MODULATED</div>
+        <div class="stage-box">
+          <canvas id="c-modded" height="120"></canvas>
+        </div>
+        <div class="stage-eq">y = x · cos(2πf<sub>c</sub>t)</div>
+      </div>
+
+      <div class="operator">
+        <div class="op-symbol">×<br>c(t+φ)</div>
+        <div class="op-arrow">→</div>
+      </div>
+
+      <div class="stage-wrap">
+        <div class="stage-label">③ DEMOD MULTIPLY</div>
+        <div class="stage-box">
+          <canvas id="c-demod-pre" height="120"></canvas>
+        </div>
+        <div class="stage-eq">z<sub>pre</sub> = y·cos(2πf<sub>c</sub>t+Δφ)</div>
+      </div>
+
+      <div class="operator">
+        <div class="op-symbol">LPF<br>↓f<sub>c</sub></div>
+        <div class="op-arrow">→</div>
+      </div>
+
+      <div class="stage-wrap">
+        <div class="stage-label">④ RECOVERED</div>
+        <div class="stage-box">
+          <canvas id="c-output" height="120"></canvas>
+        </div>
+        <div class="stage-eq">z ≈ ½·cos(Δφ)·x</div>
+      </div>
+    </div>
+
+    <!-- Waveform row -->
+    <div class="wave-row">
+      <div class="wave-panel" style="flex:2">
+        <canvas id="c-wave" height="90"></canvas>
+        <div class="wave-label">TIME DOMAIN — <span id="wave-label-txt">INPUT</span></div>
+      </div>
+      <div class="wave-panel" style="flex:1;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:12px;">
+        <div style="font-size:9px;letter-spacing:2px;color:var(--amber);margin-bottom:10px;">INSPECT STAGE</div>
+        <div style="display:flex;flex-direction:column;gap:6px;width:100%;">
+          <button class="listen-btn active" data-stage="input" onclick="selectWaveStage(this,'input')">① INPUT</button>
+          <button class="listen-btn" data-stage="modded" onclick="selectWaveStage(this,'modded')">② RING MOD</button>
+          <button class="listen-btn" data-stage="demod-pre" onclick="selectWaveStage(this,'demod-pre')">③ DEMOD ×</button>
+          <button class="listen-btn" data-stage="output" onclick="selectWaveStage(this,'output')">④ RECOVERED</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recovery meter -->
+    <div class="recovery-strip">
+      <div class="rec-label">RECOVERY</div>
+      <div class="rec-bar-wrap">
+        <div class="rec-bar" id="rec-bar" style="width:50%"></div>
+      </div>
+      <div class="rec-value" id="rec-value">0.500</div>
+      <div class="rec-db" id="rec-db">−6.0 dB</div>
+      <div class="null-warn" id="null-warn">CARRIER NULL</div>
+    </div>
+
+  </div><!-- end viz-area -->
+
+  <!-- ── CONTROLS ──────────────────────────────────── -->
+  <div class="ctrl-panel">
+
+    <!-- Signal -->
+    <div class="ctrl-section">
+      <div class="ctrl-head">SIGNAL</div>
+      <div class="ctrl-body">
+        <div class="ctrl-row">
+          <label>INPUT FREQ f<sub>in</sub><span id="v-fin">440 Hz</span></label>
+          <input type="range" id="r-fin" min="50" max="2000" value="440" step="1">
+        </div>
+        <div class="ctrl-row">
+          <label>HARMONICS<span id="v-harm">1</span></label>
+          <input type="range" id="r-harm" min="1" max="5" value="1" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Carrier -->
+    <div class="ctrl-section">
+      <div class="ctrl-head">CARRIER (SHARED)</div>
+      <div class="ctrl-body">
+        <div class="ctrl-row">
+          <label>CARRIER FREQ f<sub>c</sub><span id="v-fc">1200 Hz</span></label>
+          <input type="range" id="r-fc" min="100" max="4000" value="1200" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Demod -->
+    <div class="ctrl-section">
+      <div class="ctrl-head">DEMODULATOR</div>
+      <div class="ctrl-body">
+        <div class="ctrl-row">
+          <label>PHASE OFFSET Δφ<span id="v-phase">0°</span></label>
+          <input type="range" id="r-phase" min="0" max="360" value="0" step="0.5">
+          <div class="phase-warn coherent" id="phase-warn">● COHERENT — full recovery</div>
+        </div>
+        <div class="ctrl-row">
+          <label>LPF CUTOFF<span id="v-lpf">1000 Hz</span></label>
+          <input type="range" id="r-lpf" min="50" max="4000" value="1000" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio -->
+    <div class="ctrl-section">
+      <div class="ctrl-head">AUDIO</div>
+      <div class="ctrl-body">
+        <button class="audio-btn" id="audio-btn" onclick="toggleAudio()">▶ ENABLE AUDIO</button>
+        <div class="listen-row" id="listen-row" style="opacity:0.3;pointer-events:none;">
+          <button class="listen-btn active" onclick="setListen(this,'input')">IN</button>
+          <button class="listen-btn" onclick="setListen(this,'mod')">MOD</button>
+          <button class="listen-btn" onclick="setListen(this,'demod')">DEMOD</button>
+        </div>
+        <div class="ctrl-row" style="margin-top:10px;">
+          <label>VOLUME<span id="v-vol">70%</span></label>
+          <input type="range" id="r-vol" min="0" max="100" value="70" step="1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Formula -->
+    <div class="ctrl-section">
+      <div class="ctrl-head">MATH</div>
+      <div class="ctrl-body">
+        <div class="formula-box">
+          <span>MODULATE:</span><br>
+          y = x · cos(2πf<sub>c</sub>t)<br><br>
+          <span>DEMODULATE:</span><br>
+          z<sub>pre</sub> = y · cos(2πf<sub>c</sub>t+Δφ)<br>
+          z = LPF(z<sub>pre</sub>)<br><br>
+          <span class="hl">RESULT:</span>
+          <span class="big" id="formula-result">z ≈ ½ · x</span>
+          <span>Δφ = <span id="f-phase">0.0</span>° → cos(Δφ) = <span id="f-cos">1.000</span></span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end ctrl-panel -->
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────
+let state = {
+  fin: 440, fc: 1200, phase: 0, lpf: 1000, harm: 1,
+  waveStage: 'input', listenMode: 'input',
+  audioEnabled: false, vol: 0.7,
+  t: 0  // animation time counter
+};
+
+// ─────────────────────────────────────────────────────────────────
+// CANVAS SETUP
+// ─────────────────────────────────────────────────────────────────
+const canvases = {
+  input:     document.getElementById('c-input'),
+  modded:    document.getElementById('c-modded'),
+  demodPre:  document.getElementById('c-demod-pre'),
+  output:    document.getElementById('c-output'),
+  wave:      document.getElementById('c-wave'),
+};
+
+function resizeCanvases() {
+  for (const [key, cv] of Object.entries(canvases)) {
+    const rect = cv.parentElement.getBoundingClientRect();
+    if (rect.width > 0) {
+      cv.width  = Math.round(rect.width);
+      cv.height = parseInt(cv.getAttribute('height') || '120');
+    }
+  }
+}
+resizeCanvases();
+window.addEventListener('resize', () => { resizeCanvases(); draw(); });
+
+// ─────────────────────────────────────────────────────────────────
+// SPECTRUM DRAWING
+// ─────────────────────────────────────────────────────────────────
+function drawGrid(ctx, W, H, fmax, nFreqLines=5, nAmpLines=4) {
+  ctx.fillStyle = '#040e08';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#091a10';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < nFreqLines; i++) {
+    const x = Math.round(i / nFreqLines * W) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let i = 1; i < nAmpLines; i++) {
+    const y = Math.round(i / nAmpLines * H) + 0.5;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#1a4028';
+  ctx.font = '9px Share Tech Mono';
+  ctx.textAlign = 'left';
+  const labels = [0, 0.25, 0.5, 0.75, 1.0].map(t => Math.round(t * fmax));
+  labels.forEach((hz, i) => {
+    const x = i / (labels.length - 1) * W;
+    ctx.fillText(hz < 1000 ? hz + '' : (hz/1000).toFixed(1)+'k', x + 2, H - 2);
+  });
+}
+
+function drawImpulse(ctx, W, H, x, amp, color, glow) {
+  if (x < 0 || x > W || amp <= 0.001) return;
+  const bH = amp * (H - 18);
+  const px = Math.round(x);
+
+  // Glow
+  const gr = ctx.createLinearGradient(px, H - bH - 10, px, H);
+  gr.addColorStop(0, glow);
+  gr.addColorStop(1, 'transparent');
+  ctx.fillStyle = gr;
+  ctx.fillRect(px - 4, H - bH - 10, 8, bH + 10);
+
+  // Main line
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(px, H); ctx.lineTo(px, H - bH); ctx.stroke();
+
+  // Peak dot
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.arc(px, H - bH, 3, 0, Math.PI * 2); ctx.fill();
+
+  // Peak glow
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(px, H - bH, 6, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawLPFCurve(ctx, W, H, fmax, fc_lpf, order=2) {
+  ctx.strokeStyle = 'rgba(255,184,0,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  for (let px = 0; px <= W; px++) {
+    const f = (px / W) * fmax;
+    if (f < 1) { ctx.moveTo(px, 4); continue; }
+    const ratio = f / Math.max(fc_lpf, 1);
+    // Butterworth 2nd order: |H| = 1 / sqrt(1 + (f/fc)^(2*order))
+    const mag = 1.0 / Math.sqrt(1.0 + Math.pow(ratio, 2 * order));
+    const y = 4 + (1 - mag) * (H - 18);
+    if (px === 0) ctx.moveTo(px, y); else ctx.lineTo(px, y);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// COMPONENT CALCULATION
+// ─────────────────────────────────────────────────────────────────
+function getComponents() {
+  const { fin, fc, phase, lpf, harm } = state;
+  const phi = phase * Math.PI / 180;
+  const fmax = Math.max(fc * 2.6, fc + fin * 2 + 200);
+
+  // Input harmonics: f_in * k, k = 1..harm
+  const inputComps = [];
+  for (let k = 1; k <= harm; k++) {
+    const amp = 1.0 / k;   // natural harmonic falloff
+    inputComps.push({ freq: fin * k, amp });
+  }
+
+  // After ring mod: each harmonic produces sidebands fc ± k*fin
+  const moddedComps = [];
+  for (const ic of inputComps) {
+    const a = ic.amp * 0.5;
+    moddedComps.push({ freq: Math.abs(fc - ic.freq), amp: a });
+    moddedComps.push({ freq: fc + ic.freq, amp: a });
+  }
+
+  // After demod multiply:
+  // Each modded component (f_m) × carrier (fc) → |f_m - fc| and |f_m + fc|
+  // The components at |f_m - fc| that land near fin are the desired ones
+  // We also get 2fc ± fin terms
+  const demodPreComps = [];
+  const cosP = Math.abs(Math.cos(phi));
+  for (const mc of moddedComps) {
+    const a = mc.amp * 0.5;
+    const fLow  = Math.abs(mc.freq - fc);
+    const fHigh = mc.freq + fc;
+    demodPreComps.push({ freq: fLow,  amp: a });
+    demodPreComps.push({ freq: fHigh, amp: a * 0.7 });
+  }
+
+  // After LPF: only components below lpf survive, attenuated by Butterworth rolloff
+  // Scale all by cos(phi) (the coherence factor)
+  const outputComps = [];
+  for (const ic of inputComps) {
+    const f = ic.freq;
+    const bw_ratio = f / Math.max(lpf, 1);
+    const mag = 1.0 / Math.sqrt(1.0 + Math.pow(bw_ratio, 4));
+    const amp = ic.amp * 0.5 * cosP * mag;
+    outputComps.push({ freq: f, amp });
+  }
+
+  return { inputComps, moddedComps, demodPreComps, outputComps, fmax };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MAIN DRAW
+// ─────────────────────────────────────────────────────────────────
+function draw() {
+  const { fmax, inputComps, moddedComps, demodPreComps, outputComps } = getComponents();
+  const phi = state.phase * Math.PI / 180;
+
+  // Helper: freq → x pixel
+  const fx = (cv, f) => (f / fmax) * cv.width;
+
+  // ① INPUT
+  {
+    const cv = canvases.input;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    drawGrid(ctx, W, H, fmax);
+    for (const c of inputComps) {
+      drawImpulse(ctx, W, H, fx(cv, c.freq), c.amp,
+        '#2dff8a', 'rgba(45,255,138,0.25)');
+    }
+    // Freq label
+    ctx.fillStyle = '#2dff8a';
+    ctx.font = '9px Share Tech Mono';
+    ctx.textAlign = 'center';
+    if (inputComps.length)
+      ctx.fillText(`f_in=${state.fin}Hz`, fx(cv, inputComps[0].freq), H - 18);
+  }
+
+  // ② RING MODDED
+  {
+    const cv = canvases.modded;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    drawGrid(ctx, W, H, fmax);
+    for (const c of moddedComps) {
+      drawImpulse(ctx, W, H, fx(cv, c.freq), c.amp,
+        '#ffb800', 'rgba(255,184,0,0.2)');
+    }
+    // Label first pair
+    if (moddedComps.length >= 2) {
+      ctx.fillStyle = '#ffb800'; ctx.font='9px Share Tech Mono';
+      ctx.textAlign='center';
+      const f1 = Math.abs(state.fc - state.fin);
+      const f2 = state.fc + state.fin;
+      ctx.fillText(`f_c-f_in`, fx(cv, f1), H - 18);
+      ctx.fillText(`f_c+f_in`, fx(cv, f2), H - 18);
+    }
+  }
+
+  // ③ DEMOD PRE-LPF
+  {
+    const cv = canvases.demodPre;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    drawGrid(ctx, W, H, fmax);
+    for (const c of demodPreComps) {
+      const isLow = c.freq < state.lpf;
+      drawImpulse(ctx, W, H, fx(cv, c.freq), c.amp,
+        isLow ? '#00e5ff' : '#334',
+        isLow ? 'rgba(0,229,255,0.2)' : 'rgba(50,50,100,0.1)');
+    }
+    // LPF cursor line
+    const lpfX = fx(cv, state.lpf);
+    ctx.strokeStyle = 'rgba(255,184,0,0.5)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(lpfX, 0); ctx.lineTo(lpfX, H); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#ffb800'; ctx.font = '9px Share Tech Mono';
+    ctx.textAlign = 'center';
+    ctx.fillText('LPF', lpfX, 10);
+  }
+
+  // ④ OUTPUT
+  {
+    const cv = canvases.output;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    drawGrid(ctx, W, H, fmax);
+    drawLPFCurve(ctx, W, H, fmax, state.lpf, 2);
+    for (const c of outputComps) {
+      drawImpulse(ctx, W, H, fx(cv, c.freq), c.amp,
+        '#cc66ff', 'rgba(200,100,255,0.25)');
+    }
+    // Amplitude annotation
+    const cosP = Math.cos(phi);
+    const amp = Math.abs(cosP * 0.5);
+    ctx.fillStyle = amp > 0.05 ? '#cc66ff' : '#ff3355';
+    ctx.font = '9px Share Tech Mono';
+    ctx.textAlign = 'left';
+    ctx.fillText(`×½·cos(${state.phase.toFixed(0)}°) = ${(cosP*0.5).toFixed(3)}`, 4, 12);
+  }
+
+  // Waveform
+  drawWaveform();
+
+  // Recovery meter
+  const cosP = Math.cos(phi);
+  const recovery = Math.abs(cosP) * 0.5;
+  const recoveryDb = recovery < 0.001 ? -Infinity : 20 * Math.log10(recovery);
+  document.getElementById('rec-bar').style.width = (recovery * 100) + '%';
+  document.getElementById('rec-value').textContent = recovery.toFixed(3);
+  document.getElementById('rec-db').textContent =
+    isFinite(recoveryDb) ? recoveryDb.toFixed(1) + ' dB' : '−∞ dB';
+
+  const nullWarn = document.getElementById('null-warn');
+  nullWarn.classList.toggle('visible', recovery < 0.02);
+
+  // Phase warning
+  const pw = document.getElementById('phase-warn');
+  const p = state.phase % 360;
+  const nearNull = (p > 80 && p < 100) || (p > 260 && p < 280);
+  const nearInv  = (p > 170 && p < 190);
+  pw.className = 'phase-warn ' + (nearNull ? 'null' : nearInv ? 'inverted' : 'coherent');
+  pw.textContent = nearNull ? '● CARRIER NULL — zero output'
+                 : nearInv  ? '● INVERTED — signal polarity flip'
+                 :             '● COHERENT — ' + (recovery * 100).toFixed(0) + '% recovery';
+
+  // Formula
+  document.getElementById('formula-result').textContent =
+    `z ≈ ½·cos(${state.phase.toFixed(0)}°)·x`;
+  document.getElementById('f-phase').textContent = state.phase.toFixed(1);
+  document.getElementById('f-cos').textContent = cosP.toFixed(3);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// WAVEFORM DISPLAY
+// ─────────────────────────────────────────────────────────────────
+let waveStage = 'input';
+function selectWaveStage(btn, stage) {
+  waveStage = stage;
+  document.querySelectorAll('[data-stage]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const labels = {
+    'input': 'INPUT x(t)',
+    'modded': 'RING MOD y(t)',
+    'demod-pre': 'DEMOD× z_pre(t)',
+    'output': 'RECOVERED z(t)'
+  };
+  document.getElementById('wave-label-txt').textContent = labels[stage];
+}
+
+function drawWaveform() {
+  const cv = canvases.wave;
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const { fin, fc, phase, harm } = state;
+  const phi = phase * Math.PI / 180;
+  const t0 = performance.now() / 1000;
+
+  ctx.fillStyle = '#040e08';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  ctx.strokeStyle = '#091a10';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 8; i++) {
+    const x = Math.round(i / 8 * W);
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(0, H/2); ctx.lineTo(W, H/2); ctx.stroke();
+
+  // Sample the signal
+  const nCycles = 3;
+  const T = nCycles / fin;
+  const samples = W;
+
+  const colors = {
+    'input':     '#2dff8a',
+    'modded':    '#ffb800',
+    'demod-pre': '#00e5ff',
+    'output':    '#cc66ff',
+  };
+  const glows = {
+    'input':     'rgba(45,255,138,0.4)',
+    'modded':    'rgba(255,184,0,0.4)',
+    'demod-pre': 'rgba(0,229,255,0.4)',
+    'output':    'rgba(200,100,255,0.4)',
+  };
+
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = glows[waveStage] || '#2dff8a';
+  ctx.strokeStyle = colors[waveStage] || '#2dff8a';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+
+  for (let i = 0; i < samples; i++) {
+    const t = (i / samples) * T + t0 * 0.05; // slow drift for animation
+
+    // input signal (sum of harmonics)
+    let x = 0;
+    for (let k = 1; k <= harm; k++) x += Math.cos(2 * Math.PI * fin * k * t) / k;
+    x *= 0.8;
+
+    // carrier
+    const c = Math.cos(2 * Math.PI * fc * t);
+    const cd = Math.cos(2 * Math.PI * fc * t + phi);
+
+    let sig;
+    switch (waveStage) {
+      case 'input':     sig = x; break;
+      case 'modded':    sig = x * c; break;
+      case 'demod-pre': sig = x * c * cd; break;
+      case 'output': {
+        // approximate the LPF as a sinusoidal signal at fin only
+        const cosP = Math.cos(phi);
+        sig = 0;
+        for (let k = 1; k <= harm; k++) {
+          sig += (cosP * 0.5 / k) * Math.cos(2 * Math.PI * fin * k * t);
+        }
+        sig *= 0.8;
+        break;
+      }
+      default: sig = x;
+    }
+
+    const px = i;
+    const py = H / 2 - sig * (H / 2 - 8);
+    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ANIMATION LOOP
+// ─────────────────────────────────────────────────────────────────
+function animate() {
+  drawWaveform();
+  requestAnimationFrame(animate);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CONTROLS
+// ─────────────────────────────────────────────────────────────────
+function bindSlider(id, key, fmt) {
+  const el = document.getElementById(id);
+  const valEl = document.getElementById('v-' + key.replace('_','-'));
+  el.addEventListener('input', () => {
+    const v = parseFloat(el.value);
+    state[key] = v;
+    if (valEl) valEl.textContent = fmt(v);
+    draw();
+    updateAudio();
+  });
+}
+bindSlider('r-fin',   'fin',   v => Math.round(v) + ' Hz');
+bindSlider('r-fc',    'fc',    v => Math.round(v) + ' Hz');
+bindSlider('r-harm',  'harm',  v => Math.round(v));
+bindSlider('r-lpf',   'lpf',   v => Math.round(v) + ' Hz');
+bindSlider('r-phase', 'phase', v => v.toFixed(1) + '°');
+document.getElementById('r-vol').addEventListener('input', function() {
+  state.vol = parseFloat(this.value) / 100;
+  document.getElementById('v-vol').textContent = this.value + '%';
+  updateAudio();
+});
+
+// ─────────────────────────────────────────────────────────────────
+// WEB AUDIO
+// ─────────────────────────────────────────────────────────────────
+let audioCtx = null, audioNodes = null, currentListen = 'input';
+
+function initAudio() {
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  
+  const inputOsc = audioCtx.createOscillator();
+  inputOsc.type = 'sine';
+  inputOsc.frequency.value = state.fin;
+
+  // Ring mod: carrier oscillator drives gain parameter
+  const carrierOsc = audioCtx.createOscillator();
+  carrierOsc.type = 'sine';
+  carrierOsc.frequency.value = state.fc;
+
+  const modGain = audioCtx.createGain();
+  modGain.gain.value = 0;   // bias = 0; carrier oscillates gain ±1
+  inputOsc.connect(modGain);
+  carrierOsc.connect(modGain.gain);
+
+  // Demod: local carrier (phase shifted) × modded signal
+  const demodCarrierOsc = audioCtx.createOscillator();
+  demodCarrierOsc.frequency.value = state.fc;
+  setDemodWave(demodCarrierOsc);
+
+  const demodGain = audioCtx.createGain();
+  demodGain.gain.value = 0;
+  modGain.connect(demodGain);
+  demodCarrierOsc.connect(demodGain.gain);
+
+  // LPF
+  const lpfNode = audioCtx.createBiquadFilter();
+  lpfNode.type = 'lowpass';
+  lpfNode.frequency.value = state.lpf;
+  lpfNode.Q.value = 0.707;
+  demodGain.connect(lpfNode);
+
+  // Makeup gain +6dB (compensate ×½)
+  const makeupGain = audioCtx.createGain();
+  makeupGain.gain.value = 2.0;
+  lpfNode.connect(makeupGain);
+
+  // Router gains
+  const routeIn    = audioCtx.createGain(); routeIn.gain.value = 0;
+  const routeMod   = audioCtx.createGain(); routeMod.gain.value = 0;
+  const routeDemod = audioCtx.createGain(); routeDemod.gain.value = 0;
+  inputOsc.connect(routeIn);
+  modGain.connect(routeMod);
+  makeupGain.connect(routeDemod);
+
+  const masterGain = audioCtx.createGain();
+  masterGain.gain.value = state.vol;
+  routeIn.connect(masterGain);
+  routeMod.connect(masterGain);
+  routeDemod.connect(masterGain);
+  masterGain.connect(audioCtx.destination);
+
+  inputOsc.start(); carrierOsc.start(); demodCarrierOsc.start();
+
+  audioNodes = {
+    inputOsc, carrierOsc, demodCarrierOsc,
+    modGain, demodGain, demodCarrierOsc,
+    lpfNode, makeupGain, masterGain,
+    routeIn, routeMod, routeDemod
+  };
+
+  setListenRoute();
+}
+
+function setDemodWave(osc) {
+  if (!audioCtx) return;
+  const phi = state.phase * Math.PI / 180;
+  const real = new Float32Array([0,  Math.cos(phi)]);
+  const imag = new Float32Array([0, -Math.sin(phi)]);
+  const wave = audioCtx.createPeriodicWave(real, imag);
+  osc.setPeriodicWave(wave);
+}
+
+function setListenRoute() {
+  if (!audioNodes) return;
+  audioNodes.routeIn.gain.value    = currentListen === 'input' ? 1 : 0;
+  audioNodes.routeMod.gain.value   = currentListen === 'mod'   ? 1 : 0;
+  audioNodes.routeDemod.gain.value = currentListen === 'demod' ? 1 : 0;
+}
+
+function updateAudio() {
+  if (!audioNodes) return;
+  audioNodes.inputOsc.frequency.setTargetAtTime(state.fin, audioCtx.currentTime, 0.01);
+  audioNodes.carrierOsc.frequency.setTargetAtTime(state.fc, audioCtx.currentTime, 0.01);
+  audioNodes.demodCarrierOsc.frequency.setTargetAtTime(state.fc, audioCtx.currentTime, 0.01);
+  audioNodes.lpfNode.frequency.setTargetAtTime(state.lpf, audioCtx.currentTime, 0.01);
+  audioNodes.masterGain.gain.setTargetAtTime(state.vol, audioCtx.currentTime, 0.01);
+  setDemodWave(audioNodes.demodCarrierOsc);
+}
+
+function toggleAudio() {
+  const btn = document.getElementById('audio-btn');
+  const row = document.getElementById('listen-row');
+  if (!state.audioEnabled) {
+    if (!audioCtx) initAudio();
+    else audioCtx.resume();
+    state.audioEnabled = true;
+    btn.textContent = '■ DISABLE AUDIO';
+    btn.classList.add('active');
+    row.style.opacity = '1';
+    row.style.pointerEvents = 'auto';
+  } else {
+    audioCtx.suspend();
+    state.audioEnabled = false;
+    btn.textContent = '▶ ENABLE AUDIO';
+    btn.classList.remove('active');
+    row.style.opacity = '0.3';
+    row.style.pointerEvents = 'none';
+  }
+}
+
+function setListen(btn, mode) {
+  currentListen = mode;
+  document.querySelectorAll('#listen-row .listen-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  setListenRoute();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────────────────────────
+draw();
+animate();
+</script>
+</body>
+</html>

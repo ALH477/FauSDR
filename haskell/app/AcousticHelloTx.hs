@@ -18,10 +18,6 @@
 --   --baud  FLOAT   Symbol rate baud             (default: 1200)
 --   --count INT     Repeat message N times       (default: 1)
 --
--- Quick test without JACK (pipe raw f32 to sox):
---   cabal run acoustic-hello-tx 2>/dev/null | \
---     sox -t raw -r 48000 -e float -b 32 -c 1 -L - -d
---
 -- Expected output:
 --   [hello-tx] DeMoD Acoustic FSK — Hello World TX
 --   [hello-tx] 2000/3000 Hz · 1200 baud · 48000 Hz SR · sps=40
@@ -36,17 +32,29 @@
 
 module Main where
 
-import Control.Monad          (forM_)
-import Data.Char              (ord)
-import Data.List              (intercalate)
-import Data.Word              (Word8)
-import Data.Vector.Storable   (Vector)
+import Control.Concurrent         (forkIO, threadDelay)
+import Control.Exception          (catch, SomeException)
+import Control.Monad              (forM_, unless, when)
+import Data.Char                  (ord)
+import Data.IORef
+import Data.List                  (intercalate)
+import Data.Word                  (Word8)
+import Data.Vector.Storable       (Vector)
 import qualified Data.Vector.Storable as V
-import System.Environment     (getArgs)
-import System.Exit            (exitFailure)
-import System.IO              (hFlush, stdout)
-import Text.Printf            (printf)
-import Text.Read              (readMaybe)
+import Foreign.C.Error            (Errno(..))
+import Foreign.C.Types            (CFloat(..))
+import Foreign.Ptr                (castPtr, Ptr)
+import Foreign.Storable           (pokeElemOff)
+import System.Environment         (getArgs)
+import System.Exit                (exitFailure)
+import System.IO                  (hFlush, stdout)
+import Text.Printf                (printf)
+import Text.Read                  (readMaybe)
+
+import qualified Sound.JACK                              as JACK
+import qualified Sound.JACK.Audio                        as JAudio
+import qualified Control.Monad.Exception.Synchronous    as Sync
+import qualified Control.Monad.Trans.Class              as Trans
 
 import DCF.Faust.DSP
 import DCF.Modem.AcousticFSK
@@ -122,14 +130,6 @@ printFrame idx total f = case jfType f of
                 idx total (show t) (jfSeq f)
 
 -- ── Symbol vector → audio via Faust ──────────────────────────────────────────
---
--- DCF.Faust.DSP.compute :: DspHandle -> [Vector Float] -> Int -> IO [Vector Float]
---   inputs  = [symbolBlock]  — one Vector Float per Faust input channel
---   blk     = block size in samples (must match -vs arg in faust compile)
---   returns = [audioBlock]   — one Vector Float per Faust output channel
---
--- acoustic_fsk_mod has 1 input (symbol stream) and 1 output (mono audio).
--- We split symVec into blk-size chunks, call compute on each, concatenate.
 
 runFaustTx :: DspHandle -> Int -> Vector Float -> IO (Vector Float)
 runFaustTx dsp blk symVec = do
@@ -141,23 +141,84 @@ runFaustTx dsp blk symVec = do
   where
     processBlock vec i = do
       let chunk = V.slice (i * blk) blk vec
-      outChannels <- compute dsp [chunk] blk   -- [Vector Float] → IO [Vector Float]
+      outChannels <- compute dsp [chunk] blk
       return $ case outChannels of
         (audio : _) -> audio
         []          -> V.replicate blk 0.0
 
+-- ── TX Playback Buffer ────────────────────────────────────────────────────────
+--
+-- A simple IORef-backed FIFO of CFloat samples.
+-- The JACK process callback drains this; writeAudio enqueues into it.
+-- Audio is generated faster than real-time; drainTxBuf paces the TX loop.
+
+newtype TxBuf = TxBuf { tbSamples :: IORef [CFloat] }
+
+newTxBuf :: IO TxBuf
+newTxBuf = TxBuf <$> newIORef []
+
+-- | Enqueue a block of Float samples for JACK playback.
+appendTxBuf :: TxBuf -> Vector Float -> IO ()
+appendTxBuf tb vec =
+  modifyIORef' (tbSamples tb) (++ map CFloat (V.toList vec))
+
+-- | Block the calling thread until the JACK callback has consumed all
+--   queued samples (i.e. the audio has actually been played out).
+drainTxBuf :: TxBuf -> IO ()
+drainTxBuf tb = go
+  where
+    go = do
+      xs <- readIORef (tbSamples tb)
+      unless (null xs) $ threadDelay 10_000 >> go
+
+-- ── JACK TX Process Callback ──────────────────────────────────────────────────
+--
+-- Runs in the JACK real-time thread. Drains TxBuf into the output port buffer,
+-- padding with silence on underrun.
+
+txJackCallback
+    :: TxBuf
+    -> JACK.Port JAudio.Sample JACK.Output
+    -> JACK.NFrames
+    -> Sync.ExceptionalT Errno IO ()
+txJackCallback tb outPort nframes = Trans.lift $ do
+  let JACK.NFrames w = nframes
+      n = fromIntegral w :: Int
+  rawPtr <- JAudio.getBufferPtr outPort nframes
+  let outPtr = castPtr rawPtr :: Ptr CFloat
+  xs <- readIORef (tbSamples tb)
+  -- Write n samples: drain from queue, pad with 0 on underrun.
+  forM_ (zip [0 .. n-1] (xs ++ repeat (CFloat 0.0))) $ \(i, s) ->
+    pokeElemOff outPtr i s
+  writeIORef (tbSamples tb) (drop n xs)
+
+-- ── JACK TX Session ───────────────────────────────────────────────────────────
+--
+-- Opens a JACK client with a single output port, installs txJackCallback,
+-- and blocks until the process exits.  Runs in a background forkIO thread.
+
+jackTxSession :: TxBuf -> IO ()
+jackTxSession tb =
+  JACK.handleExceptions $
+    JACK.withClientDefault "acoustic-hello-tx" $ \client ->
+      JACK.withPort client "output" $ \outPort ->
+        JACK.withProcess client (txJackCallback tb outPort) $
+          JACK.withActivation client $
+            Trans.lift $ do
+              putStrLn "[hello-tx] JACK output port active."
+              putStrLn "[hello-tx] Connect with: jack_connect acoustic-hello-tx:output system:playback_1"
+              -- Block indefinitely; killed when the main thread exits.
+              let idle = threadDelay 1_000_000 >> idle
+              idle
+
 -- ── Audio output ──────────────────────────────────────────────────────────────
 --
--- Stub: replace with JACK port write or PipeWire stream write.
--- For testing, write raw f32-LE to stdout and pipe to sox:
---
---   cabal run acoustic-hello-tx 2>/dev/null | \
---     sox -t raw -r 48000 -e float -b 32 -c 1 -L - -d
---
--- With the `jack` Haskell package, replace this with:
---   JACK.Process.writePortBuffer outPort nframes audioVec
-writeAudio :: Int -> Vector Float -> IO ()
-writeAudio _sr _vec = return ()   -- stub
+-- Enqueue synthesised audio into TxBuf for the JACK callback to play.
+-- The top-level binding is a placeholder; main rebinds it as a closure
+-- capturing the live TxBuf.
+
+writeAudio :: TxBuf -> Int -> Vector Float -> IO ()
+writeAudio tb _sr vec = appendTxBuf tb vec
 
 -- ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -189,7 +250,16 @@ main = do
   putStrLn "[hello-tx] Empty line or Ctrl+C to quit."
   putStrLn "[hello-tx]"
 
-  -- Open DSP once, prompt in a loop
+  -- Start JACK output session in a background thread.
+  tb <- newTxBuf
+  _  <- forkIO $
+    jackTxSession tb
+      `catch` \(e :: SomeException) ->
+        putStrLn ("[hello-tx] JACK error: " ++ show e)
+  -- Give JACK time to connect before the first frame is sent.
+  threadDelay 500_000
+
+  -- Open DSP once, prompt in a loop.
   withDsp dspCfg $ \dsp -> do
     setAcousticTxParams dsp cfg
     let loop = do
@@ -211,7 +281,10 @@ main = do
                 printFrame idx (nFrames - 1) frame
                 let symVec = encodeAcousticFrame cfg frame
                 audioVec  <- runFaustTx dsp (acBlockSize cfg) symVec
-                writeAudio (cliRate cli) audioVec
+                writeAudio tb (cliRate cli) audioVec
+              -- Wait for the JACK callback to finish playing all queued audio
+              -- before accepting the next message.
+              drainTxBuf tb
               putStrLn "[hello-tx] Sent."
               putStrLn "[hello-tx]"
               loop

@@ -38,17 +38,29 @@
 
 module Main where
 
-import Control.Monad         (when)
-import Data.Char             (chr, isPrint)
+import Control.Concurrent        (forkIO, threadDelay,
+                                   MVar, newEmptyMVar, takeMVar, tryPutMVar)
+import Control.Exception         (catch, SomeException)
+import Control.Monad             (forM, void, when)
+import Data.Char                 (chr, isPrint)
 import Data.IORef
-import Data.List             (intercalate)
-import Data.Word             (Word8)
-import Data.Vector.Storable  (Vector)
+import Data.List                 (intercalate)
+import Data.Word                 (Word8)
+import Data.Vector.Storable      (Vector)
 import qualified Data.Vector.Storable as V
-import System.Environment    (getArgs)
-import System.Exit           (exitFailure)
-import Text.Printf           (printf)
-import Text.Read             (readMaybe)
+import Foreign.C.Error           (Errno(..))
+import Foreign.C.Types           (CFloat(..))
+import Foreign.Ptr               (castPtr, Ptr)
+import Foreign.Storable          (peekElemOff)
+import System.Environment        (getArgs)
+import System.Exit               (exitFailure)
+import Text.Printf               (printf)
+import Text.Read                 (readMaybe)
+
+import qualified Sound.JACK                              as JACK
+import qualified Sound.JACK.Audio                        as JAudio
+import qualified Control.Monad.Exception.Synchronous    as Sync
+import qualified Control.Monad.Trans.Class              as Trans
 
 import DCF.Faust.DSP
 import DCF.Modem.AcousticFSK
@@ -124,22 +136,95 @@ printRxFrame f = case jfType f of
                 (jfSeq f)
   t        -> printf "[hello-rx] frame · %s · seq=%d\n" (show t) (jfSeq f)
 
+-- ── RX Capture Buffer ─────────────────────────────────────────────────────────
+--
+-- The JACK input callback appends Float samples here.
+-- readFromCapBuf blocks via cbSem until at least blk samples are available,
+-- then pops exactly blk samples and returns them as a storable Vector.
+
+data CapBuf = CapBuf
+  { cbSamples :: !(IORef [Float])   -- captured samples (head = oldest)
+  , cbSem     :: !(MVar ())         -- signalled by callback when samples arrive
+  }
+
+newCapBuf :: IO CapBuf
+newCapBuf = CapBuf <$> newIORef [] <*> newEmptyMVar
+
+-- ── JACK RX Process Callback ──────────────────────────────────────────────────
+--
+-- Runs in the JACK real-time thread.
+-- Appends n CFloat samples from the input port buffer into CapBuf,
+-- then signals the consumer semaphore.
+
+rxJackCallback
+    :: CapBuf
+    -> JACK.Port JAudio.Sample JACK.Input
+    -> JACK.NFrames
+    -> Sync.ExceptionalT Errno IO ()
+rxJackCallback cb inPort nframes = Trans.lift $ do
+  let JACK.NFrames w = nframes
+      n = fromIntegral w :: Int
+  rawPtr <- JAudio.getBufferPtr inPort nframes
+  let inPtr = castPtr rawPtr :: Ptr CFloat
+  -- Collect n samples from the JACK input buffer.
+  samples <- forM [0 .. n-1] $ \i -> do
+    CFloat s <- peekElemOff inPtr i
+    return s
+  modifyIORef' (cbSamples cb) (++ samples)
+  void $ tryPutMVar (cbSem cb) ()
+
+-- ── JACK RX Session ───────────────────────────────────────────────────────────
+--
+-- Opens a JACK client with a single input port, installs rxJackCallback,
+-- and blocks until the process exits.  Runs in a background forkIO thread.
+
+jackRxSession :: CapBuf -> IO ()
+jackRxSession cb =
+  JACK.handleExceptions $
+    JACK.withClientDefault "acoustic-hello-rx" $ \client ->
+      JACK.withPort client "input" $ \inPort ->
+        JACK.withProcess client (rxJackCallback cb inPort) $
+          JACK.withActivation client $
+            Trans.lift $ do
+              putStrLn "[hello-rx] JACK input port active."
+              putStrLn "[hello-rx] Connect with: jack_connect system:capture_1 acoustic-hello-rx:input"
+              -- Block indefinitely; killed when the main thread exits.
+              let idle = threadDelay 1_000_000 >> idle
+              idle
+
+-- ── Read from Capture Buffer ──────────────────────────────────────────────────
+--
+-- Blocks until at least blk samples are available, then pops them and returns
+-- a storable Vector Float for downstream Faust processing.
+
+readFromCapBuf :: CapBuf -> Int -> IO (Vector Float)
+readFromCapBuf cb blk = do
+  takeMVar (cbSem cb)            -- sleep until the callback signals new data
+  xs <- readIORef (cbSamples cb)
+  if length xs < blk
+    then do
+      -- Not enough samples yet; put the semaphore back and retry.
+      void $ tryPutMVar (cbSem cb) ()
+      threadDelay 1_000
+      readFromCapBuf cb blk
+    else do
+      let (chunk, rest) = splitAt blk xs
+      writeIORef (cbSamples cb) rest
+      -- Keep the semaphore live if there are still unconsumed samples.
+      when (length rest >= blk) $ void $ tryPutMVar (cbSem cb) ()
+      return $ V.fromList chunk
+
 -- ── Audio input ──────────────────────────────────────────────────────────────
 --
--- Stub: replace with JACK port read or PipeWire stream read.
--- In the real integration:
---   JACK.Process.readPortBuffer inPort nframes >>= return . vectorFromBuffer
---
--- For testing, feed raw f32 from arecord:
---   arecord -f FLOAT_LE -r 48000 -c 1 /dev/stdin | \
---     cabal run acoustic-hello-rx
-readAudioBlock :: Int -> Int -> IO (Vector Float)
-readAudioBlock _sr blk = return (V.replicate blk 0.0)   -- stub
+-- Top-level binding kept for documentation; main rebinds it as a closure
+-- capturing the live CapBuf.
+
+readAudioBlock :: CapBuf -> Int -> Int -> IO (Vector Float)
+readAudioBlock cb _sr blk = readFromCapBuf cb blk
 
 -- ── Soft samples → bits via Faust ────────────────────────────────────────────
 --
 -- acoustic_fsk_demod: 1 input (mono mic audio), 1 output (soft bit decisions).
--- DCF.Faust.DSP.compute :: DspHandle -> [Vector Float] -> Int -> IO [Vector Float]
 
 runFaustRx :: DspHandle -> Int -> Vector Float -> IO (Vector Float)
 runFaustRx dsp blk micVec = do
@@ -150,8 +235,6 @@ runFaustRx dsp blk micVec = do
 
 -- ── Frame reassembly ─────────────────────────────────────────────────────────
 
--- | Accumulate DATA frame payloads until a BEACON EOM frame arrives.
---   Returns the reassembled message string.
 type MsgBuf = IORef [Word8]
 
 newMsgBuf :: IO MsgBuf
@@ -218,15 +301,24 @@ main = do
   putStrLn "[hello-rx] Listening... (Ctrl+C to stop)"
   putStrLn "[hello-rx]"
 
+  -- Start JACK input session in a background thread.
+  capBuf <- newCapBuf
+  _      <- forkIO $
+    jackRxSession capBuf
+      `catch` \(e :: SomeException) ->
+        putStrLn ("[hello-rx] JACK error: " ++ show e)
+  -- Give JACK time to connect before we start draining the capture buffer.
+  threadDelay 500_000
+
   msgBuf   <- newMsgBuf
   statsRef <- newStats
   bitBuf   <- newIORef ([] :: [Bool])
 
-  -- Discard initial blocks while mic AGC settles
+  -- Discard initial blocks while mic AGC settles.
   putStrLn "[hello-rx] Waiting for mic AGC to settle..."
   let acqSamples = acAcqFrames cfg * acousticFrameSamples cfg
       acqBlocks  = (acqSamples + acBlockSize cfg - 1) `div` acBlockSize cfg
-  mapM_ (\_ -> readAudioBlock (cliRate cli) (acBlockSize cfg)) [1..acqBlocks]
+  mapM_ (\_ -> readAudioBlock capBuf (cliRate cli) (acBlockSize cfg)) [1..acqBlocks]
   putStrLn "[hello-rx] Ready."
   putStrLn "[hello-rx]"
 
@@ -234,8 +326,8 @@ main = do
   withDsp dspCfg $ \dsp -> do
     setAcousticRxParams dsp cfg
     let loop = do
-          -- 1. Read mic block from JACK/PipeWire
-          micBlock <- readAudioBlock (cliRate cli) (acBlockSize cfg)
+          -- 1. Read mic block from JACK via CapBuf
+          micBlock <- readAudioBlock capBuf (cliRate cli) (acBlockSize cfg)
 
           -- 2. Feed through Faust acoustic_fsk_demod → soft bit decisions
           softBlock <- runFaustRx dsp (acBlockSize cfg) micBlock
@@ -252,7 +344,6 @@ main = do
 
   where
     -- Try to extract all complete JackFrames from the bit buffer.
-    -- findJackFrame does byte-aligned sliding sync search with CRC gating.
     drainFrames msgBuf statsRef bitBuf = do
       bits <- readIORef bitBuf
       case findJackFrame bits of
@@ -271,7 +362,6 @@ main = do
 
         JFBeacon -> do
           bumpBeacon statsRef
-          -- EOM beacon — flush accumulated payload to message
           msg <- flushMessage msgBuf
           when (not (null msg)) $ do
             putStrLn "[hello-rx] ─────────────────────────────"
