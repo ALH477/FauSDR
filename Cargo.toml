@@ -1,0 +1,64 @@
+[package]
+name = "demod"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0"
+description = "DeMoD 17-byte transport frame codec and SDR modulator"
+
+# ── Library ───────────────────────────────────────────────────────────────────
+#
+# crate-type includes:
+#   "rlib"       — Rust-to-Rust linkage (cargo test, soapy_sdr bin)
+#   "staticlib"  — C-callable static archive for Haskell FFI (ccall faust_dsp_*)
+#                  GHC links via:  extra-lib-dirs: rust/target/release
+#                                  extra-libraries: demod
+[lib]
+name = "demod"
+path = "src/lib.rs"
+crate-type = ["rlib", "staticlib"]
+
+# ── Binaries ──────────────────────────────────────────────────────────────────
+
+[[bin]]
+name = "soapy_sdr"
+path = "src/bin/soapy_sdr.rs"
+
+# ── Integration tests ─────────────────────────────────────────────────────────
+
+[[test]]
+name = "frame_tests"
+path = "tests/frame_tests.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
+
+[dependencies]
+# SoapySDR bindings — used by soapy_sdr bin
+soapysdr = "0.3"
+
+# Complex number type for I/Q interleaving in soapy_sdr.rs
+num-complex = "0.4"
+
+# ── Build-time dependencies ───────────────────────────────────────────────────
+#
+# build.rs invokes `faust -lang rust` to compile each .dsp file into a .rs
+# stub under build/ before the Rust compile begins.  This means:
+#   1. faust must be in PATH (guaranteed by the nix dev shell)
+#   2. dsp/ must exist at the crate root
+#   3. Generated files land in build/ and are include!()'d by each DSP module
+
+[build-dependencies]
+# No external crates needed — build.rs uses std::process::Command directly.
+
+# ── Dev dependencies ──────────────────────────────────────────────────────────
+
+[dev-dependencies]
+# All tests use only std + this crate — no extra deps needed.
+
+# ── Feature flags ─────────────────────────────────────────────────────────────
+#
+# [features]
+# faust-stub = []   # future: compile with stub DSP instead of generated code

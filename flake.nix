@@ -27,7 +27,7 @@
               ./haskell/vendor/mtl-evil-instances {};
             # Add jack to overrides so it's available as a haskell package
             jack = hsuper.jack;
-            # cabal2 pkgconfig-dependsnix lowercases names for argument names.
+            # cabal2nix lowercases pkgconfig-depends names for argument names.
             # cabal file has: pkgconfig-depends: SoapySDR  →  arg name: soapysdr
             # faust/fftw3f/jack2 are NOT in pkgconfig-depends so must NOT be passed.
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
@@ -53,6 +53,12 @@
           overlays = [ rust-overlay.overlays.default ];
           config.allowUnfree = true;
         };
+
+        # ── Faust (stock nixpkgs) ─────────────────────────────────────────────
+        # nixpkgs faust2 has -lang c++ broken (listed in --help but compiled out).
+        # We use -lang rust instead — confirmed working in the installed binary.
+        # No override needed; we just reference pkgs.faust directly.
+        faust = pkgs.faust;
 
         # ── Haskell package ───────────────────────────────────────────────────
         #
@@ -104,32 +110,12 @@
         ];
 
         # ── DSP and signal processing ─────────────────────────────────────────
-        # ── Faust with C++ backend ─────────────────────────────────────────────────
-        # nixpkgs faust2 has no top-level `backends` override parameter —
-        # backend selection is done via CMake cache variables per-backend.
-        # CPP_BACKEND / OCPP_BACKEND = "COMPILER STATIC DYNAMIC" enables -lang c++.
-        # LLVM_BACKEND keeps IR/JIT support.  C_BACKEND adds -lang c.
-        faustWithCpp = pkgs.faust.overrideAttrs (old: {
-          # Enable the C++ compiler backend so `faust -lang c++` works.
-          # "COMPILER" = include backend in the faust binary.
-          # We strip any existing backend flags to avoid duplicates, then append.
-          cmakeFlags =
-            builtins.filter
-              (f: builtins.match "-D(C|CPP|OCPP)_BACKEND=.*" f == null)
-              (old.cmakeFlags or [])
-            ++ [
-              "-DCPP_BACKEND=COMPILER"
-              "-DOCPP_BACKEND=COMPILER"
-              "-DC_BACKEND=COMPILER"
-            ];
-        });
-
-        dspStack = with pkgs; [
-          faustWithCpp
-          liquid-dsp
-          fftwFloat
-          volk
-          codec2
+        dspStack = [
+          faust
+          pkgs.liquid-dsp
+          pkgs.fftwFloat
+          pkgs.volk
+          pkgs.codec2
         ];
 
         # ── C/C++ toolchain ───────────────────────────────────────────────────
@@ -184,7 +170,8 @@
         shellHook = ''
           export CC=clang
           export CXX=clang++
-          export FAUST_ARCH_PATH="${pkgs.faust}/share/faust"
+          export FAUST_ARCH_PATH="${faust}/share/faust"
+          export FAUST_RUST_ARCH="${faust}/share/faust/rust"
           export SOAPY_SDR_ROOT="${pkgs.soapysdr-with-plugins}"
           export LLVM_DIR="${pkgs.llvmPackages_18.llvm.dev}/lib/cmake/llvm"
           export PKG_CONFIG_PATH="${pkgs.liquid-dsp}/lib/pkgconfig:${pkgs.fftwFloat}/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -250,7 +237,7 @@
           _dsp_row() {
             local file="$1" desc="$2"
             local stem="''${file%.dsp}"
-            if [ -f "$DEMOD_BUILD_DIR/''${stem}_gen.cpp" ]; then
+            if [ -f "$DEMOD_BUILD_DIR/''${stem}_gen.rs" ]; then
               local built="''${_GN}✓''${_R}"
             else
               local built="''${_GR}·''${_R}"
@@ -280,7 +267,7 @@
           printf "  ''${_VT}aliases''${_R}\n"
           printf "  ''${_GR}───────────────────────────────────────────────────────''${_R}\n"
           _al() { printf "  ''${_WH}%-28s''${_R}  ''${_GR}%s''${_R}\n" "$1" "$2"; }
-          _al "faust-<scheme>"           "compile one DSP  (e.g. faust-qpsk)"
+          _al "faust-<scheme>"           "compile DSP → .rs  (e.g. faust-qpsk)"
           _al "faust-all-mod"            "compile all RF modulators"
           _al "faust-all-demod"          "compile all RF demodulators"
           _al "faust-all-audio"          "compile all audio-band DSP"
@@ -292,53 +279,56 @@
           _al "jf-crc-check"             "CRC-CCITT stdin[0..5]   (JF pin 0xC23F)"
           printf "\n"
 
-          # ── Faust compile helper ───────────────────────────────────────────
+          # ── Faust compile helper (Rust backend) ───────────────────────────
+          # -lang rust emits a self-contained .rs with a `mydsp` struct.
+          # No arch file needed for library mode — faust_bridge.rs includes
+          # the generated file directly via include!() and calls new_mydsp().
+          # faust2jackrust is used for standalone JACK apps (arch provided).
           _fc() {
             local src="$DEMOD_DSP_DIR/$1"
             local arch="$2"
             local out="$DEMOD_BUILD_DIR/$3"
             mkdir -p "$DEMOD_BUILD_DIR"
             printf "  ''${_CY}faust''${_R}  %s  ''${_GR}→''${_R}  %s\n" "$1" "$(basename "$out")"
-            # When arch is empty, omit -a: Faust emits a bare DSP class for
-            # direct linking by faust_bridge.cpp (library/headless mode).
-            # Passing -a "" causes Faust to fail looking for the cxx backend.
             if [ -n "$arch" ]; then
-              if faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out" 2>/dev/null; then
+              # Standalone JACK app via faust2jackrust
+              if faust2jackrust -a "$arch" "$src" -o "$out" 2>/dev/null; then
                 printf "  ''${_GN}✓  compiled''${_R}\n"
               else
                 printf "  ''${_RD}✗  FAILED''${_R}\n"
-                faust -a "$arch" -lang c++ -vec -vs 256 "$src" -o "$out"
+                faust2jackrust -a "$arch" "$src" -o "$out"
               fi
             else
-              if faust -lang c++ -vec -vs 256 "$src" -o "$out" 2>/dev/null; then
+              # Library mode: bare mydsp struct, no arch wrapper
+              if faust -lang rust "$src" -o "$out" 2>/dev/null; then
                 printf "  ''${_GN}✓  compiled''${_R}\n"
               else
                 printf "  ''${_RD}✗  FAILED''${_R}\n"
-                faust -lang c++ -vec -vs 256 "$src" -o "$out"
+                faust -lang rust "$src" -o "$out"
               fi
             fi
           }
 
           # RF modulators
-          alias faust-bpsk='_fc modulator.dsp $PROJECT_ROOT/arch/soapy-sdr.cpp modulator_gen.cpp'
-          alias faust-bpsk-hs='_fc modulator_hs.dsp "" modulator_hs_gen.cpp'
-          alias faust-qpsk='_fc qpsk_mod.dsp "" qpsk_mod_gen.cpp'
-          alias faust-gmsk='_fc gmsk_mod.dsp "" gmsk_mod_gen.cpp'
-          alias faust-ask='_fc ask_mod.dsp "" ask_mod_gen.cpp'
-          alias faust-fsk='_fc fsk_mod.dsp "" fsk_mod_gen.cpp'
+          alias faust-bpsk='_fc modulator.dsp $PROJECT_ROOT/arch/soapy-sdr.cpp modulator_gen.rs'
+          alias faust-bpsk-hs='_fc modulator_hs.dsp "" modulator_hs_gen.rs'
+          alias faust-qpsk='_fc qpsk_mod.dsp "" qpsk_mod_gen.rs'
+          alias faust-gmsk='_fc gmsk_mod.dsp "" gmsk_mod_gen.rs'
+          alias faust-ask='_fc ask_mod.dsp "" ask_mod_gen.rs'
+          alias faust-fsk='_fc fsk_mod.dsp "" fsk_mod_gen.rs'
 
           # RF demodulators
-          alias faust-bpsk-demod='_fc bpsk_demod.dsp "" bpsk_demod_gen.cpp'
-          alias faust-qpsk-demod='_fc qpsk_demod.dsp "" qpsk_demod_gen.cpp'
-          alias faust-gmsk-demod='_fc gmsk_demod.dsp "" gmsk_demod_gen.cpp'
-          alias faust-ask-demod='_fc ask_demod.dsp "" ask_demod_gen.cpp'
-          alias faust-fsk-demod='_fc fsk_demod.dsp "" fsk_demod_gen.cpp'
+          alias faust-bpsk-demod='_fc bpsk_demod.dsp "" bpsk_demod_gen.rs'
+          alias faust-qpsk-demod='_fc qpsk_demod.dsp "" qpsk_demod_gen.rs'
+          alias faust-gmsk-demod='_fc gmsk_demod.dsp "" gmsk_demod_gen.rs'
+          alias faust-ask-demod='_fc ask_demod.dsp "" ask_demod_gen.rs'
+          alias faust-fsk-demod='_fc fsk_demod.dsp "" fsk_demod_gen.rs'
 
           # Audio-band DSP
-          alias faust-jack-mod='_fc jack_mod.dsp "" jack_mod_gen.cpp'
-          alias faust-jack-demod='_fc jack_demod.dsp "" jack_demod_gen.cpp'
-          alias faust-acoustic-mod='_fc acoustic_fsk_mod.dsp "" acoustic_fsk_mod_gen.cpp'
-          alias faust-acoustic-demod='_fc acoustic_fsk_demod.dsp "" acoustic_fsk_demod_gen.cpp'
+          alias faust-jack-mod='_fc jack_mod.dsp "" jack_mod_gen.rs'
+          alias faust-jack-demod='_fc jack_demod.dsp "" jack_demod_gen.rs'
+          alias faust-acoustic-mod='_fc acoustic_fsk_mod.dsp "" acoustic_fsk_mod_gen.rs'
+          alias faust-acoustic-demod='_fc acoustic_fsk_demod.dsp "" acoustic_fsk_demod_gen.rs'
 
           # Batch compile
           alias faust-all-mod='for m in modulator_hs qpsk_mod gmsk_mod ask_mod fsk_mod; do _fc ''${m}.dsp "" ''${m}_gen.cpp; done'
@@ -389,14 +379,11 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
           dcf-faust-sdr = dcfPackage;
         };
 
-        # ── Checks (nix flake check) ────────────────────────────────────────
-        # Verify the package builds successfully (tests are included in the build)
+        # ── Checks (nix flake check) ──────────────────────────────────────────
         checks = {
           frame-tests = pkgs.runCommand "frame-tests" {
             nativeBuildInputs = [ dcfPackage ];
           } ''
-            # Verify the package was built successfully
-            # The existence of the binary confirms the build worked
             ls -la "${dcfPackage}/bin/" || true
             touch "$out"
           '';
