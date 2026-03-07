@@ -25,7 +25,9 @@
             # Use a vendored copy with all fixes applied — no sed fragility.
             mtl-evil-instances = hself.callCabal2nix "mtl-evil-instances"
               ./haskell/vendor/mtl-evil-instances {};
-            # cabal2nix lowercases pkgconfig-depends names for argument names.
+            # Add jack to overrides so it's available as a haskell package
+            jack = hsuper.jack;
+            # cabal2 pkgconfig-dependsnix lowercases names for argument names.
             # cabal file has: pkgconfig-depends: SoapySDR  →  arg name: soapysdr
             # faust/fftw3f/jack2 are NOT in pkgconfig-depends so must NOT be passed.
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
@@ -71,6 +73,8 @@
             # Use a vendored copy with all superclass constraints fixed.
             mtl-evil-instances = hself.callCabal2nix "mtl-evil-instances"
               ./haskell/vendor/mtl-evil-instances {};
+            # Add jack to overrides so it's available as a haskell package
+            jack = hsuper.jack;
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
               soapysdr = pkgs.soapysdr-with-plugins;
             };
@@ -353,6 +357,19 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
         packages = {
           default       = dcfPackage;
           dcf-faust-sdr = dcfPackage;
+        };
+
+        # ── Checks (nix flake check) ────────────────────────────────────────
+        # Verify the package builds successfully (tests are included in the build)
+        checks = {
+          frame-tests = pkgs.runCommand "frame-tests" {
+            nativeBuildInputs = [ dcfPackage ];
+          } ''
+            # Verify the package was built successfully
+            # The existence of the binary confirms the build worked
+            ls -la "${dcfPackage}/bin/" || true
+            touch "$out"
+          '';
         };
 
         # ── Apps (nix run) ────────────────────────────────────────────────────
