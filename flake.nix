@@ -371,12 +371,203 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
           fi
         '';
 
+        # ── Runtime dependency closure ─────────────────────────────────────────
+        #
+        # All .so libs needed at runtime for both acoustic and SDR binaries.
+        # Kept as a let binding so AppImage, tarball, Docker, and devShells
+        # all share the same list without rec self-reference issues.
+        runtimeDeps = with pkgs; [
+          soapysdr-with-plugins
+          rtl-sdr hackrf uhd limesuite   # SoapySDR hardware plugins
+          jack2                           # JACK client library
+          pipewire                        # PipeWire (used by most modern desktops)
+          liquid-dsp fftwFloat volk codec2
+          glibc
+          stdenv.cc.cc.lib               # libstdc++ — needed by GHC RTS + Faust C++
+        ];
+
       in {
 
         # ── Packages ──────────────────────────────────────────────────────────
-        packages = {
+        packages = rec {
           default       = dcfPackage;
           dcf-faust-sdr = dcfPackage;
+
+          # ── Docker image — layered for fast rebuilds ───────────────────────
+          #
+          # Build:  nix build .#docker
+          # Load:   docker load < result
+          #
+          # Acoustic TX (needs host PipeWire socket mounted):
+          #   docker run --rm -it \
+          #     -v /run/user/1000/pipewire-0:/run/user/1000/pipewire-0 \
+          #     -v /run/user/1000/jack:/run/user/1000/jack \
+          #     demod-faust-sdr:latest acoustic-hello-tx
+          #
+          # SDR TX (needs USB device passthrough):
+          #   docker run --rm -it --device /dev/bus/usb demod-faust-sdr:latest demod-sdr-hs
+          docker = pkgs.dockerTools.buildLayeredImage {
+            name = "demod-faust-sdr";
+            tag  = "latest";
+
+            # Layer 0: system + DSP libs (changes rarely — long cache lifetime)
+            # Layer 1: SDR plugins        (changes on dep bumps)
+            # Layer 2: binaries           (changes on every code rebuild)
+            contents = runtimeDeps ++ [
+              dcfPackage
+              pkgs.bashInteractive
+              pkgs.coreutils
+              pkgs.cacert
+            ];
+
+            config = {
+              Entrypoint = [ "${pkgs.bashInteractive}/bin/bash" ];
+              Cmd        = [ "-c" "echo 'DeMoD Faust-SDR — commands: acoustic-hello-tx  acoustic-hello-rx  demod-sdr-hs  demod-rx-hs'" ];
+              Env = [
+                # SoapySDR finds hardware plugins via SOAPY_SDR_PLUGIN_PATH
+                "SOAPY_SDR_PLUGIN_PATH=${pkgs.soapysdr-with-plugins}/lib/SoapySDR/modules0.8"
+                "LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath runtimeDeps}"
+                # JACK/PipeWire: bind-mount the host socket at docker run time
+                "PIPEWIRE_RUNTIME_DIR=/run/user/1000"
+                "JACK_DEFAULT_SERVER=default"
+              ];
+              Labels = {
+                "org.opencontainers.image.description" = "DeMoD Faust-SDR — acoustic FSK + wideband BPSK modem";
+                "org.opencontainers.image.source"      = "https://github.com/ALH477/FauSDR";
+              };
+            };
+          };
+
+          # ── AppImages — single executable, runs on any Linux >= 4.x ─────────
+          #
+          # Build:  nix build .#appimage-hello-tx
+          #         nix build .#appimage-hello-rx
+          #         nix build .#appimage-sdr-tx
+          #         nix build .#appimage-sdr-rx
+          # Run:    chmod +x result && ./result
+          appimage-hello-tx = pkgs.appimageTools.wrapType2 {
+            name    = "acoustic-hello-tx";
+            version = "0.3.0";
+            src     = pkgs.runCommand "hello-tx-appdir" {} ''
+              mkdir -p $out/usr/bin
+              cp ${dcfPackage}/bin/acoustic-hello-tx $out/usr/bin/acoustic-hello-tx
+            '';
+            extraPkgs = _p: runtimeDeps;
+          };
+
+          appimage-hello-rx = pkgs.appimageTools.wrapType2 {
+            name    = "acoustic-hello-rx";
+            version = "0.3.0";
+            src     = pkgs.runCommand "hello-rx-appdir" {} ''
+              mkdir -p $out/usr/bin
+              cp ${dcfPackage}/bin/acoustic-hello-rx $out/usr/bin/acoustic-hello-rx
+            '';
+            extraPkgs = _p: runtimeDeps;
+          };
+
+          appimage-sdr-tx = pkgs.appimageTools.wrapType2 {
+            name    = "demod-sdr-hs";
+            version = "0.3.0";
+            src     = pkgs.runCommand "sdr-tx-appdir" {} ''
+              mkdir -p $out/usr/bin
+              cp ${dcfPackage}/bin/demod-sdr-hs $out/usr/bin/demod-sdr-hs
+            '';
+            extraPkgs = _p: runtimeDeps;
+          };
+
+          appimage-sdr-rx = pkgs.appimageTools.wrapType2 {
+            name    = "demod-rx-hs";
+            version = "0.3.0";
+            src     = pkgs.runCommand "sdr-rx-appdir" {} ''
+              mkdir -p $out/usr/bin
+              cp ${dcfPackage}/bin/demod-rx-hs $out/usr/bin/demod-rx-hs
+            '';
+            extraPkgs = _p: runtimeDeps;
+          };
+
+          # ── Tarball — unpack anywhere, run ./demod-faust-sdr/run <binary> ───
+          #
+          # Build:  nix build .#tarball
+          # Use:    tar xf result/demod-faust-sdr.tar.gz
+          #         ./demod-faust-sdr/run acoustic-hello-tx
+          #
+          # The run launcher script auto-sets LD_LIBRARY_PATH and
+          # SOAPY_SDR_PLUGIN_PATH relative to the unpacked directory.
+          tarball =
+            let
+              libEnv = pkgs.buildEnv {
+                name  = "demod-runtime-libs";
+                paths = runtimeDeps;
+                pathsToLink = [ "/lib" ];
+              };
+            in
+            pkgs.runCommand "demod-faust-sdr-tarball" {
+              nativeBuildInputs = [ pkgs.gnutar pkgs.gzip ];
+            } ''
+              mkdir -p $out
+              mkdir -p demod-faust-sdr/bin demod-faust-sdr/lib
+
+              for bin in acoustic-hello-tx acoustic-hello-rx demod-sdr-hs demod-rx-hs; do
+                cp ${dcfPackage}/bin/$bin demod-faust-sdr/bin/$bin
+              done
+
+              find ${libEnv}/lib -name "*.so*" -not -type d | while read f; do
+                cp --no-dereference "$f" demod-faust-sdr/lib/ 2>/dev/null || true
+              done
+
+              cat > demod-faust-sdr/run << 'LAUNCHER'
+              #!/usr/bin/env bash
+              set -euo pipefail
+              DIR="$(cd "$(dirname "$0")" && pwd)"
+              export LD_LIBRARY_PATH="$DIR/lib:''${LD_LIBRARY_PATH:-}"
+              export SOAPY_SDR_PLUGIN_PATH="$DIR/lib/SoapySDR/modules0.8"
+              BIN=$1; shift; exec "$DIR/bin/$BIN" "$@"
+              LAUNCHER
+              chmod +x demod-faust-sdr/run
+
+              cat > demod-faust-sdr/README << 'README'
+              DeMoD Faust-SDR portable bundle
+              ================================
+              ./run acoustic-hello-tx    acoustic FSK TX (needs JACK/PipeWire running)
+              ./run acoustic-hello-rx    acoustic FSK RX (needs JACK/PipeWire running)
+              ./run demod-sdr-hs         wideband BPSK TX (needs SoapySDR hardware)
+              ./run demod-rx-hs          wideband BPSK RX (needs SoapySDR hardware)
+
+              JACK: start pipewire or jackd first, then:
+                jack_connect acoustic-hello-tx:output system:playback_1
+
+              SDR: plug in RTL-SDR / HackRF / LimeSDR. USB permissions:
+                sudo usermod -aG plugdev $USER  (then re-login)
+              README
+
+              tar czf $out/demod-faust-sdr.tar.gz demod-faust-sdr/
+            '';
+
+          # ── Nix bundles — self-extracting, no Nix needed on target ───────────
+          #
+          # Uses nix-bundle (arx-based) to pack the entire Nix store closure
+          # into a single self-extracting shell script.
+          # Recipient does NOT need Nix — extracts to /tmp on first run.
+          #
+          # Build: nix build .#bundle-hello-tx
+          #
+          # Alternative (ralismark/nix-appimage bundler):
+          #   nix bundle --bundler github:ralismark/nix-appimage .#hello-tx
+          bundle-hello-tx = pkgs.runCommand "bundle-hello-tx" {
+            nativeBuildInputs = [ pkgs.nix-bundle ];
+          } ''
+            mkdir -p $out
+            nix-bundle ${dcfPackage}/bin/acoustic-hello-tx $out/acoustic-hello-tx
+            chmod +x $out/acoustic-hello-tx
+          '';
+
+          bundle-hello-rx = pkgs.runCommand "bundle-hello-rx" {
+            nativeBuildInputs = [ pkgs.nix-bundle ];
+          } ''
+            mkdir -p $out
+            nix-bundle ${dcfPackage}/bin/acoustic-hello-rx $out/acoustic-hello-rx
+            chmod +x $out/acoustic-hello-rx
+          '';
         };
 
         # ── Checks (nix flake check) ──────────────────────────────────────────

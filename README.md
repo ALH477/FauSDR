@@ -441,17 +441,70 @@ ITransport* dcf_transport_create(void) {
 
 ---
 
+## Distribution
+
+Pre-built packages for all four binaries (`acoustic-hello-tx`, `acoustic-hello-rx`, `demod-sdr-hs`, `demod-rx-hs`).
+
+### Docker
+
+```bash
+nix build .#docker
+docker load < result
+# Acoustic TX — mount host PipeWire/JACK socket:
+docker run --rm -it \
+  -v /run/user/1000/pipewire-0:/run/user/1000/pipewire-0 \
+  -v /run/user/1000/jack:/run/user/1000/jack \
+  demod-faust-sdr:latest acoustic-hello-tx
+# SDR TX — pass through USB device:
+docker run --rm -it --device /dev/bus/usb \
+  demod-faust-sdr:latest demod-sdr-hs
+```
+
+Layered image — runtime libs and SDR plugins in low layers, binaries on top. Only the top layer rebuilds on code changes.
+
+### AppImage (any Linux ≥ kernel 4.x, no install required)
+
+```bash
+nix build .#appimage-hello-tx && chmod +x result && ./result
+nix build .#appimage-hello-rx && chmod +x result && ./result
+nix build .#appimage-sdr-tx   && chmod +x result && ./result
+nix build .#appimage-sdr-rx   && chmod +x result && ./result
+```
+
+Bundles the binary and all `.so` dependencies via patchelf rpath. No Nix, no Docker, no package manager. JACK/PipeWire must be running on the host.
+
+### Tarball (unpack and run anywhere)
+
+```bash
+nix build .#tarball
+tar xf result/demod-faust-sdr.tar.gz
+./demod-faust-sdr/run acoustic-hello-tx
+./demod-faust-sdr/run demod-sdr-hs
+```
+
+Contains `bin/`, a flat `lib/` with the full runtime closure, and a `run` launcher that sets `LD_LIBRARY_PATH` and `SOAPY_SDR_PLUGIN_PATH` automatically relative to the unpacked directory.
+
+### Nix bundle (self-extracting, no Nix needed on target)
+
+```bash
+nix build .#bundle-hello-tx   # → single self-extracting shell script
+nix build .#bundle-hello-rx
+# or, using the nix-appimage bundler:
+nix bundle --bundler github:ralismark/nix-appimage .#hello-tx
+```
+
+Packs the entire Nix store closure into a self-extracting archive. Extracts to `/tmp` on first run. Largest format (~500 MB unpacked) but requires nothing on the target machine.
+
+---
+
 ## Nix Dev Shells
 
 | Shell | Command | Includes |
 |-------|---------|----------|
-| Haskell full | `cd haskell && nix develop` | GHC 9.6, HLS, cabal, Faust 2.83, SoapySDR, GNURadio, inspectrum |
-| Haskell headless | `cd haskell && nix develop .#headless` | GHC, cabal, Faust, SoapySDR |
-| Modem dev | `cd haskell && nix develop .#modem-dev` | Headless + liquid-dsp, codec2, minimodem, sox, baudline |
-| Faust SDR | `nix develop` (root, `demod-faust-sdr-env`) | Faust 2.83 (-lang rust), liquid-dsp, FFTW, VOLK, codec2, SoapySDR |
-| C++ full | `nix develop` (root) | clang17, cmake, Faust, SoapySDR, GNURadio, inspectrum |
-| C++ headless | `nix develop .#headless` | clang17, cmake, Faust, SoapySDR |
-| Embedded | `nix develop .#embedded` | ARM cross-compiler, avr-gcc, openocd |
+| Full | `cd haskell && nix develop` | GHC 9.10, HLS, cabal, Faust 2.83, SoapySDR, GNURadio, inspectrum, JACK2 |
+| Headless | `cd haskell && nix develop .#headless` | GHC, cabal, Faust, SoapySDR, JACK2 |
+| Modem dev | `cd haskell && nix develop .#modem-dev` | Headless + liquid-dsp, codec2, minimodem, sox, baudline, PipeWire |
+| Embedded | `cd haskell && nix develop .#embedded` | Rust, ARM cross-compiler, openocd, probe-rs, cargo-embed |
 
 ---
 
@@ -498,6 +551,12 @@ Costas loop PLL architecture: all three Costas loop implementations (`bpsk_demod
 
 ## Roadmap
 
+- [x] Docker image (`nix build .#docker`) — layered, `docker load`-ready
+- [x] AppImage packages for all four binaries (`nix build .#appimage-*`)
+- [x] Portable tarball with bundled libs and auto-launching `run` script (`nix build .#tarball`)
+- [x] Nix bundle / self-extracting archive (`nix build .#bundle-*`)
+- [x] Clean build — zero GHC warnings across all 6 Haskell source files
+- [x] `jack-0.7.2.2` builds in dev shell (jack2 C headers added to all devShells)
 - [ ] Wire QPSK, GMSK, FSK, ASK into `runDemodulator` as selectable schemes
 - [ ] `FCtrl` fragmentation in `sdr_transport.c` for messages > 4 bytes
 - [ ] Soft-domain correlator for frame sync (better Eb/N0 sensitivity)
