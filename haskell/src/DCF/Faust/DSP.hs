@@ -34,12 +34,12 @@ module DCF.Faust.DSP
   ) where
 
 import Control.Exception          (bracket, throwIO, ErrorCall (..))
-import Control.Monad              (when, forM)
+import Control.Monad              (when)
 import Data.Vector.Storable       (Vector)
 import qualified Data.Vector.Storable         as V
 import qualified Data.Vector.Storable.Mutable as VM
 import Foreign.C.String           (withCString)
-import Foreign.C.Types            (CFloat (..), CInt (..))
+import Foreign.C.Types            (CFloat (..))
 import Foreign.Marshal.Array      (allocaArray)
 import Foreign.Storable           (pokeElemOff)
 import Foreign.Ptr                (Ptr, castPtr, nullPtr)

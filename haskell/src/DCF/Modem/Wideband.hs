@@ -33,7 +33,7 @@ module DCF.Modem.Wideband
   , runWidebandDemodulator
   ) where
 
-import Control.Monad         (forM_, when, unless)
+import Control.Monad         (forM_, when)
 import Data.Bits             (shiftR, (.&.))
 import Data.ByteString       (ByteString)
 import qualified Data.ByteString as BS
@@ -43,9 +43,8 @@ import qualified Data.Vector.Storable as V
 import Data.Word             (Word8)
 
 import DCF.Faust.DSP         (DspHandle, setParam)
-import DCF.SDR.Device        (SdrDevice, SdrRxDevice, writeSamples, readSamples,
-                               SdrConfig (..), SdrRxConfig (..))
-import DCF.Transport.Frame   (DeModFrame (..), encodeFrame, decodeFrame, FrameType (..))
+import DCF.SDR.Device        (SdrDevice, SdrRxDevice, writeSamples, readSamples)
+import DCF.Transport.Frame   (DeModFrame (..), encodeFrame, decodeFrame)
 
 -- ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -225,7 +224,7 @@ findFrameWB bits
           bs = bitsToBytes candidate
       in  case decodeFrame bs of
             Just frame -> Just (frame, rest)
-            Nothing    -> findFrameWB (tail bits)
+            Nothing    -> findFrameWB (drop 1 bits)
 
 -- | Run the wideband RX demodulator.
 --   Calls handler for each decoded frame; handler returns False to stop.
@@ -259,7 +258,7 @@ runWidebandDemodulator cfg dsp sdr handler = do
           Left 0  -> loop           -- timeout — keep trying
           Left _  -> return ()      -- hard error — stop
           Right iq -> do
-            let (ivec, qvec) = deinterleave iq
+            let (ivec, _qvec) = deinterleave iq
                 -- TODO: feed through Faust wideband_demod DSP via processBlock
                 -- For now soft = ivec (direct I-arm, no matched filter)
                 -- Replace with: soft <- processDemodBlock dsp blockSz ivec qvec

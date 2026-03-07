@@ -200,7 +200,7 @@ findJackFrame bits
           bs = bitsToBytes candidate
       in  case decodeJF bs of
             Just frame -> Just (frame, rest)
-            Nothing    -> findJackFrame (tail bits)
+            Nothing    -> findJackFrame (drop 1 bits)
 
 -- | Run the acoustic RX loop.
 --   readAudio returns the next block of mic samples (from JACK/PipeWire capture).

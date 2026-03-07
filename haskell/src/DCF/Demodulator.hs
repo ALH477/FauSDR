@@ -51,7 +51,6 @@ module DCF.Demodulator
 
 import Control.Exception          (throwIO, ErrorCall (..))
 import Control.Monad              (when, forM_)
-import Data.Bits                  (setBit, testBit)
 import Data.ByteString            (ByteString)
 import qualified Data.ByteString  as BS
 import Data.IORef                 (newIORef, readIORef, writeIORef, modifyIORef')
@@ -306,10 +305,10 @@ flushAcquisition sdrRx dsp n = forM_ [1..n] $ \_ -> do
     Left  _ -> return ()   -- timeout / error during acquisition — ignore
     Right iq -> do
       let (iBlock, qBlock) = deinterleave iq
-      _ <- processBlock dsp (V.length iBlock) iBlock qBlock
+      _ <- flushBlock dsp (V.length iBlock) iBlock qBlock
       return ()
   where
-    processBlock dsp' blkSz iVec qVec = do
+    flushBlock dsp' blkSz iVec qVec = do
       results <- compute dsp' [iVec, qVec] blkSz
       case results of
         (s : _) -> return s

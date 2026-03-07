@@ -34,7 +34,7 @@ module Main where
 
 import Control.Concurrent         (forkIO, threadDelay)
 import Control.Exception          (catch, SomeException)
-import Control.Monad              (forM_, unless, when)
+import Control.Monad              (forM_, unless)
 import Data.Char                  (ord)
 import Data.IORef
 import Data.List                  (intercalate)
@@ -104,8 +104,13 @@ messageToFrames msg =
   in  dataFs ++ [eomF]
 
 mkData :: Int -> [Word8] -> JackFrame
-mkData i bs = let [b0,b1,b2,b3] = take 4 (bs ++ repeat 0)
-              in  JackFrame (fromIntegral i `mod` 16) JFData (b0,b1,b2,b3)
+mkData i bs =
+  let padded = bs ++ repeat 0
+      b0 = padded !! 0
+      b1 = padded !! 1
+      b2 = padded !! 2
+      b3 = padded !! 3
+  in  JackFrame (fromIntegral i `mod` 16) JFData (b0,b1,b2,b3)
 
 chunksOf :: Int -> [a] -> [[a]]
 chunksOf _ [] = []

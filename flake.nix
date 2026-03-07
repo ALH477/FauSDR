@@ -414,6 +414,9 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
         devShells.default = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_18.stdenv; } {
           name = "demod-faust-sdr";
           packages = dspStack ++ cppTools ++ analysisTools ++ sdrModules ++ [
+            pkgs.cabal-install
+            pkgs.haskellPackages.ghc
+            pkgs.jack2
             rustToolchain
             pythonEnv
             pkgs.ripgrep
@@ -430,6 +433,9 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
         devShells.headless = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_18.stdenv; } {
           name = "demod-faust-sdr-headless";
           packages = dspStack ++ cppTools ++ sdrModules ++ [
+            pkgs.cabal-install
+            pkgs.haskellPackages.ghc
+            pkgs.jack2
             rustToolchain
             pkgs.python311
             pkgs.hexyl pkgs.xxd pkgs.socat
@@ -444,6 +450,8 @@ print(f\"JF  CRC-CCITT: 0x{crc:04X}  wire: {crc>>8:02X} {crc&0xFF:02X}  pin={pin
         devShells.modem-dev = pkgs.mkShell.override { stdenv = pkgs.llvmPackages_18.stdenv; } {
           name = "demod-modem-dev";
           packages = dspStack ++ cppTools ++ sdrModules ++ acousticTools ++ [
+            pkgs.cabal-install
+            pkgs.haskellPackages.ghc
             rustToolchain
             pythonEnv
             pkgs.ripgrep

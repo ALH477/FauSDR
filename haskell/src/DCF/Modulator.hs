@@ -44,13 +44,11 @@ module DCF.Modulator
   ) where
 
 import Control.Exception          (throwIO, ErrorCall (..))
-import Control.Monad              (when)
 import Data.IORef                 (newIORef, readIORef, modifyIORef')
 import Data.Time.Clock.POSIX      (getPOSIXTime)
 import Data.Vector.Storable       (Vector)
 import qualified Data.Vector.Storable as V
 import Data.Word                  (Word16, Word32, Word8)
-import Foreign.C.Types            (CLong (..))
 
 import DCF.Faust.DSP   (DspConfig (..), DspHandle, withDsp, compute, setParam)
 import DCF.SDR.Device  (SdrConfig (..), SdrDevice, withSdrDevice, writeSamples)
