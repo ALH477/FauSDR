@@ -20,8 +20,12 @@
       overlays.default = final: prev: {
         haskellPackages = prev.haskellPackages.override {
           overrides = hself: hsuper: {
-            mtl-evil-instances = prev.haskell.lib.markUnbroken hsuper.mtl-evil-instances;
-            monad-exception     = prev.haskell.lib.markUnbroken hsuper.monad-exception;
+            mtl-evil-instances =
+              prev.haskell.lib.doJailbreak
+                (prev.haskell.lib.markUnbroken hsuper.mtl-evil-instances);
+            monad-exception =
+              prev.haskell.lib.doJailbreak
+                (prev.haskell.lib.markUnbroken hsuper.monad-exception);
             # cabal2nix lowercases pkgconfig-depends names for argument names.
             # cabal file has: pkgconfig-depends: SoapySDR  →  arg name: soapysdr
             # faust/fftw3f/jack2 are NOT in pkgconfig-depends so must NOT be passed.
@@ -57,13 +61,19 @@
         # faust/fftw3f/jack2 are extra-libraries, not pkgconfig-depends —
         # they are linked automatically and must NOT be passed here.
         #
-        # monad-exception (required by the `jack` Haskell binding) pulls in
-        # mtl-evil-instances which nixpkgs marks broken.  We un-break it locally
-        # — it builds fine; the nixpkgs mark is a stale maintenance flag.
+        # The `jack` Haskell binding requires monad-exception, which requires
+        # mtl-evil-instances-0.1.  That package has ancient version bounds
+        # (mtl <2.1, transformers <0.3) written in 2012 that are incompatible
+        # with GHC 9.6.  Fix: markUnbroken + doJailbreak to strip the bounds.
+        # The library itself is trivial and builds fine with current deps.
         haskellPackages = pkgs.haskellPackages.override {
           overrides = hself: hsuper: {
-            mtl-evil-instances = pkgs.haskell.lib.markUnbroken hsuper.mtl-evil-instances;
-            monad-exception     = pkgs.haskell.lib.markUnbroken hsuper.monad-exception;
+            mtl-evil-instances =
+              pkgs.haskell.lib.doJailbreak
+                (pkgs.haskell.lib.markUnbroken hsuper.mtl-evil-instances);
+            monad-exception =
+              pkgs.haskell.lib.doJailbreak
+                (pkgs.haskell.lib.markUnbroken hsuper.monad-exception);
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
               soapysdr = pkgs.soapysdr-with-plugins;
             };
