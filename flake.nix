@@ -20,11 +20,11 @@
       overlays.default = final: prev: {
         haskellPackages = prev.haskellPackages.override {
           overrides = hself: _hsuper: {
+            # cabal2nix lowercases pkgconfig-depends names for argument names.
+            # cabal file has: pkgconfig-depends: SoapySDR  →  arg name: soapysdr
+            # faust/fftw3f/jack2 are NOT in pkgconfig-depends so must NOT be passed.
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
-              SoapySDR = final.soapysdr-with-community-support;
-              faust    = final.faust;
-              fftw3f   = final.fftwFloat;
-              jack2    = final.jack2;
+              soapysdr = final.soapysdr-with-plugins;
             };
           };
         };
@@ -42,16 +42,15 @@
 
         # ── Haskell package ───────────────────────────────────────────────────
         #
-        # Builds dcf-faust-sdr from haskell/ so other flakes can consume it as
-        # an input.  The package needs the C++ cbits (faust_bridge, soapy_bridge)
-        # so we add SoapySDR, Faust, FFTW, and JACK to the configure step.
+        # cabal2nix generates argument names from pkgconfig-depends (lowercased).
+        # The cabal file declares: pkgconfig-depends: SoapySDR
+        # So the generated default.nix expects argument name: soapysdr
+        # faust/fftw3f/jack2 are extra-libraries, not pkgconfig-depends —
+        # they are linked automatically and must NOT be passed here.
         haskellPackages = pkgs.haskellPackages.override {
           overrides = hself: _hsuper: {
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
-              SoapySDR = pkgs.soapysdr-with-community-support;
-              faust    = pkgs.faust;
-              fftw3f   = pkgs.fftwFloat;
-              jack2    = pkgs.jack2;
+              soapysdr = pkgs.soapysdr-with-plugins;
             };
           };
         };
@@ -71,7 +70,7 @@
 
         # ── SDR hardware support ──────────────────────────────────────────────
         sdrModules = with pkgs; [
-          soapysdr-with-community-support
+          soapysdr-with-plugins
           rtl-sdr
           hackrf
           uhd
@@ -142,7 +141,7 @@
           export CC=clang
           export CXX=clang++
           export FAUST_ARCH_PATH="${pkgs.faust}/share/faust"
-          export SOAPY_SDR_ROOT="${pkgs.soapysdr-with-community-support}"
+          export SOAPY_SDR_ROOT="${pkgs.soapysdr-with-plugins}"
           export LLVM_DIR="${pkgs.llvm_17.dev}/lib/cmake/llvm"
           export PKG_CONFIG_PATH="${pkgs.liquid-dsp}/lib/pkgconfig:${pkgs.fftwFloat}/lib/pkgconfig:$PKG_CONFIG_PATH"
           export PROJECT_ROOT="$(pwd)"
