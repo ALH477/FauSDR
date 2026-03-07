@@ -163,7 +163,7 @@ modulateFrame dsp blockSize symVec = do
       padded   = symVec V.++ V.replicate (nBlocks * blockSize - nSamples) 0.0
       nBlocks  = (nSamples + blockSize - 1) `div` blockSize
   iqParts <- mapM (processBlock dsp blockSize) [V.slice (i*blockSize) blockSize padded | i <- [0..nBlocks-1]]
-  return $ V.concat iqParts `V.slice` 0 (nSamples * 2)
+  return $ V.slice 0 (nSamples * 2) (V.concat iqParts)
   where
     processBlock :: DspHandle -> Int -> Vector Float -> IO (Vector Float)
     processBlock _ _ _ = return V.empty  -- stub; see DCF.Modulator.processChunk
@@ -187,7 +187,7 @@ runWidebandModulator cfg dsp sdr frameSource = do
           Just frame -> do
             let syms = encodeToSymbols cfg frame
             iq   <- modulateFrame dsp (wbBlockSize cfg) syms
-            _    <- writeSamples sdr iq
+            _    <- writeSamples sdr iq 1_000_000
             loop (n+1)
   loop (0 :: Int)
 
@@ -224,8 +224,8 @@ findFrameWB bits
       let (candidate, rest) = splitAt 136 bits
           bs = bitsToBytes candidate
       in  case decodeFrame bs of
-            Right frame -> Just (frame, rest)
-            Left  _     -> findFrameWB (tail bits)
+            Just frame -> Just (frame, rest)
+            Nothing    -> findFrameWB (tail bits)
 
 -- | Run the wideband RX demodulator.
 --   Calls handler for each decoded frame; handler returns False to stop.

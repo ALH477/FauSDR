@@ -61,7 +61,8 @@ instance (MonadTransControl t, Monad (t m), MonadCont m) => MonadCont (t m) wher
 
 
 ------------------------------------------------------------------------------
-instance (MonadBaseControl b m, MonadCont b) => MonadCont m where
+-- mtl-2.3: MonadCont gains `Monad m` superclass → must be in context
+instance (Monad m, MonadBaseControl b m, MonadCont b) => MonadCont m where
     callCC f = control $ \run -> callCC $ \c -> run . f $
         \a -> liftBase (run (return a) >>= c)
 
@@ -73,7 +74,8 @@ instance (MonadTransControl t, Monad (t m), MonadError e m) => MonadError e (t m
 
 
 ------------------------------------------------------------------------------
-instance (MonadBaseControl b m, MonadError e b) => MonadError e m where
+-- mtl-2.3: MonadError gains `Monad m` superclass → must be in context
+instance (Monad m, MonadBaseControl b m, MonadError e b) => MonadError e m where
     throwError = liftBase . throwError
     catchError t h = control $ \run -> catchError (run t) (\e -> run (h e))
 

@@ -20,12 +20,11 @@
       overlays.default = final: prev: {
         haskellPackages = prev.haskellPackages.override {
           overrides = hself: hsuper: {
-            mtl-evil-instances =
-              prev.haskell.lib.doJailbreak
-                (prev.haskell.lib.markUnbroken hsuper.mtl-evil-instances);
-            monad-exception =
-              prev.haskell.lib.doJailbreak
-                (prev.haskell.lib.markUnbroken hsuper.monad-exception);
+            # mtl-evil-instances-0.1 doesn't compile with GHC 9.x / mtl-2.3.
+            # All instance declarations need updated superclass constraints.
+            # Use a vendored copy with all fixes applied — no sed fragility.
+            mtl-evil-instances = hself.callCabal2nix "mtl-evil-instances"
+              ./haskell/vendor/mtl-evil-instances {};
             # cabal2nix lowercases pkgconfig-depends names for argument names.
             # cabal file has: pkgconfig-depends: SoapySDR  →  arg name: soapysdr
             # faust/fftw3f/jack2 are NOT in pkgconfig-depends so must NOT be passed.
@@ -68,12 +67,10 @@
         # The library itself is trivial and builds fine with current deps.
         haskellPackages = pkgs.haskellPackages.override {
           overrides = hself: hsuper: {
-            mtl-evil-instances =
-              pkgs.haskell.lib.doJailbreak
-                (pkgs.haskell.lib.markUnbroken hsuper.mtl-evil-instances);
-            monad-exception =
-              pkgs.haskell.lib.doJailbreak
-                (pkgs.haskell.lib.markUnbroken hsuper.monad-exception);
+            # mtl-evil-instances-0.1 doesn't compile with GHC 9.x / mtl-2.3.
+            # Use a vendored copy with all superclass constraints fixed.
+            mtl-evil-instances = hself.callCabal2nix "mtl-evil-instances"
+              ./haskell/vendor/mtl-evil-instances {};
             dcf-faust-sdr = hself.callCabal2nix "dcf-faust-sdr" ./haskell {
               soapysdr = pkgs.soapysdr-with-plugins;
             };

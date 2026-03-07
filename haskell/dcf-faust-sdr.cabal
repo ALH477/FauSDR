@@ -78,7 +78,6 @@ library
     , time              >= 1.12
     , transformers      >= 0.5
     , jack              >= 0.7
-    , monad-exception   >= 0.4
 
 -- ── TX Executable ─────────────────────────────────────────────────────────────
 
@@ -116,7 +115,7 @@ executable acoustic-hello-tx
     , vector            >= 0.13
     , transformers      >= 0.5
     , jack              >= 0.7
-    , monad-exception   >= 0.4
+    , explicit-exception >= 0.1
 
 -- ── Acoustic Hello RX ─────────────────────────────────────────────────────────
 
@@ -132,7 +131,7 @@ executable acoustic-hello-rx
     , vector            >= 0.13
     , transformers      >= 0.5
     , jack              >= 0.7
-    , monad-exception   >= 0.4
+    , explicit-exception >= 0.1
 
 -- ── Test suite ────────────────────────────────────────────────────────────────
 
