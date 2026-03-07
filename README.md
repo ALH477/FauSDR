@@ -6,6 +6,10 @@ Two codebases. One stack. A Haskell/Faust/SoapySDR RF TX/RX pipeline and a polyg
 
 ---
 
+<img width="670" height="860" alt="image" src="https://github.com/user-attachments/assets/b51f8d98-2d12-4d85-8012-298776e66be4" />
+
+<img width="736" height="469" alt="image" src="https://github.com/user-attachments/assets/7e7c5eb8-c755-4102-8f1a-3ac4c1d1ceff" />
+
 ## Repository Layout
 
 ```
