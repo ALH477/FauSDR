@@ -60,21 +60,21 @@ dc_estimate(sig) = sig : fi.lowpass(1, adapt_rate * symbol_rate);
 // Outputs: positive = mark (1), negative = space (0)
 // threshold = dc_estimate * (1 - depth * 0.5)
 // decision  = envelope - threshold → centred around 0
-slicer(env_sig) =
-  let {
+slicer(env_sig) = env_sig - threshold
+with {
     dc        = dc_estimate(env_sig);
     threshold = dc * (1.0 - depth * 0.5);
-  }
-  in env_sig - threshold;
+};
+
 
 // ── Full demodulator ──────────────────────────────────────────────────────────
-ask_demod(i_in, q_in) =
-  let {
+ask_demod(i_in, q_in) = out * output_gain
+with {
     env = envelope(i_in, q_in);
     mf  = matched(env);
     out = slicer(mf);
-  }
-  in out * output_gain;
+};
+
 
 // ── Main: 2 inputs → 1 output ────────────────────────────────────────────────
 process = ask_demod;

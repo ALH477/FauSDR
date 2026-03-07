@@ -48,12 +48,12 @@ li(i, q)     = i / env(i, q);
 lq(i, q)     = q / env(i, q);
 
 // ── Mode 0: Phase-derivative discriminator ────────────────────────────────────
-phase_disc(i_l, q_l) =
-  let {
+phase_disc(i_l, q_l) = i_l * dq - q_l * di
+with {
     di = i_l - i_l';
     dq = q_l - q_l';
-  }
-  in i_l * dq - q_l * di;
+};
+
 
 // ── Mode 1: Dual-filter energy discriminator ──────────────────────────────────
 // Two 2nd-order bandpass filters centred at mark (carrier + dev) and
@@ -70,14 +70,14 @@ bpf(fc, bw, x) = x : fi.resonbp(fc, bw / fc, 1.0);
 
 energy(x) = x * x : fi.lowpass(1, symbol_rate * 0.5);  // envelope follower
 
-dual_filter_disc(i_l, q_l) =
-  let {
+dual_filter_disc(i_l, q_l) = e_mark - e_space
+with {
     // Mix to real signal (just use I arm post-limiting for energy comparison)
     real_sig   = i_l;
     e_mark     = energy(bpf(f_mark,  bpf_bw, real_sig));
     e_space    = energy(bpf(f_space, bpf_bw, real_sig));
-  }
-  in e_mark - e_space;   // + = mark, - = space
+};
+   // + = mark, - = space
 
 // ── Post-discriminator matched filter ────────────────────────────────────────
 // Integrate over one symbol period to maximise SNR.
@@ -86,16 +86,16 @@ dual_filter_disc(i_l, q_l) =
 matched(sym) = sym : fi.lowpass(2, symbol_rate * 0.5);
 
 // ── Full demodulator ──────────────────────────────────────────────────────────
-fsk_demod(i_in, q_in) =
-  let {
+fsk_demod(i_in, q_in) = sym * output_gain
+with {
     i_l   = li(i_in, q_in);
     q_l   = lq(i_in, q_in);
     disc  = select2(mode > 0.5,
                     phase_disc(i_l, q_l),
                     dual_filter_disc(i_l, q_l));
     sym   = matched(disc);
-  }
-  in sym * output_gain;
+};
+
 
 // ── Main: 2 inputs → 1 output ────────────────────────────────────────────────
 process = fsk_demod;

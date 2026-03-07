@@ -43,18 +43,29 @@ zeta = 0.707;
 kp   = 4.0 * zeta * loop_bw;
 ki   = 4.0 * loop_bw * loop_bw;
 
-costas_loop(i_in, q_in) =
-  letrec {
-    'vco_phase  = (vco_phase + vco_freq) : ma.modulo(2.0 * ma.PI);
-    'vco_i      = cos(vco_phase);
-    'vco_q      = sin(vco_phase);
-    'bb_i       = i_in * vco_i + q_in * vco_q;
-    'bb_q       = i_in * vco_q - q_in * vco_i;
-    'phase_err  = bb_i * bb_q;
-    'freq_int   = freq_int + ki * phase_err;
-    'vco_freq   = kp * phase_err + freq_int;
-  }
-  in bb_i;
+// BPSK Costas PLL — state-transition core.
+// Inputs:  (i_s, q_s, ph, fi)  — i/q signal + previous phase/fint
+// Outputs: (i_s, q_s, bi, ph_new, fi_new)  — state last so ~ feeds them back
+// No with{} binding references any other with{} binding — cycle-free.
+pll_core_bpsk(i_s, q_s, ph, fi) = i_s, q_s, bi, ph_new, fi_new
+with {
+    vi     = cos(ph);
+    vq     = sin(ph);
+    bi     = i_s * vi + q_s * vq;
+    bq     = i_s * vq - q_s * vi;
+    e      = bi * bq;
+    fi_new = fi + ki * e;
+    ph_new = (ph + kp * e + fi_new) : ma.modulo(2.0 * ma.PI);
+};
+
+// costas_loop: thread (i_in,q_in) through pll_core_bpsk feedback circuit.
+// ~ feeds last 2 outputs (ph_new,fi_new) back to last 2 inputs (ph,fi).
+// Pass-through outputs (i,q,bi): discard i,q; return bi.
+costas_loop(i_in, q_in) = bb_i
+with {
+    pll_out = (i_in, q_in) : pll_core_bpsk ~ (_, _);
+    bb_i    = pll_out : !, !, _, !, !;
+};
 
 // ── RRC Matched Filter — 63-tap, sps=10 (96 kHz SR) ─────────────────────────
 rrc10_coeffs = waveform {

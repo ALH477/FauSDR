@@ -50,15 +50,15 @@ inst_freq(bit) = carrier_freq + bit * (deviation / ma.SR);
 //
 // I(t) = cos(θ(t))
 // Q(t) = sin(θ(t))
-fsk_mod(bit) =
-  let {
+fsk_mod(bit) = (i_out * output_gain), (q_out * output_gain)
+with {
     f      = inst_freq(bit);
     phs    = os.phasor(1, f);          // 0..1 sawtooth at instantaneous freq
     theta  = phs * (2.0 * ma.PI);     // scale to 0..2π radians
     i_out  = cos(theta);
     q_out  = sin(theta);
-  }
-  in (i_out * output_gain), (q_out * output_gain);
+};
+
 
 // ── Main: 1 input → 2 outputs ─────────────────────────────────────────────────
 process = fsk_mod;

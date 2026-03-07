@@ -75,8 +75,8 @@ phase(sym)      = phase_incr(sym) : fi.pole(0.9999);
 // os.phasor(tablesize, freq) returns a 0..1 normalized sawtooth.
 // tablesize must be a positive integer (use 1 for a normalized unit sawtooth).
 // We scale by 2π to get radians, then add the modulation phase φ(t).
-gmsk_mod(sym) =
-  let {
+gmsk_mod(sym) = (i_out * output_gain), (q_out * output_gain)
+with {
     phi     = phase(sym);
     // Carrier phasor: 0..1 sawtooth at carrier_freq Hz, scaled to 0..2π radians
     theta_c = os.phasor(1, carrier_freq) * (2.0 * ma.PI);
@@ -84,8 +84,8 @@ gmsk_mod(sym) =
     theta   = theta_c + phi;
     i_out   = cos(theta);
     q_out   = sin(theta);
-  }
-  in (i_out * output_gain), (q_out * output_gain);
+};
+
 
 // ── Main: 1 input → 2 outputs ─────────────────────────────────────────────────
 process = gmsk_mod;

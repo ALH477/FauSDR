@@ -64,13 +64,13 @@ ci = os.oscrc(carrier_freq);
 cq = os.oscs(carrier_freq);
 
 // ── ASK modulation ────────────────────────────────────────────────────────────
-ask_mod(bit) =
-  let {
+ask_mod(bit) = (i_out * output_gain), (q_out * output_gain)
+with {
     env   = envelope(bit);
     i_out = ci * env;
     q_out = cq * env;
-  }
-  in (i_out * output_gain), (q_out * output_gain);
+};
+
 
 // ── Main: 1 input → 2 outputs ─────────────────────────────────────────────────
 process = ask_mod;

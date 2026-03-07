@@ -49,7 +49,7 @@ rrc35_coeffs = waveform {
   0.001919179, 0.006802846, -0.005085017, 0.000215126, 0.002395231, -0.001750678, -0.000109512,
   0.001068726, -0.000685631, -0.000143010, 0.000503715, -0.000269222, -0.000107568, 0.000231999,
   -0.000098284, -0.000064865, 0.000099169, -0.000030961, -0.000032618, 0.000037337, -0.000007479,
-  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499,
+  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499
 };
 
 rrc_coeff(n) = rrc35_coeffs, int(n) : rdtable;
@@ -67,14 +67,14 @@ cq = os.oscs(carrier_freq);    // sin(ωt)  [90° behind ci]
 //
 // This places the I symbol stream on the I carrier and the Q symbol stream
 // on the quadrature carrier, which is exactly what IQ modulation means.
-qpsk_mod(i_sym, q_sym) =
-  let {
+qpsk_mod(i_sym, q_sym) = (rf_i * output_gain), (rf_q * output_gain)
+with {
     i_pulse = pulse(i_sym);
     q_pulse = pulse(q_sym);
     rf_i    = i_pulse * ci - q_pulse * cq;
     rf_q    = i_pulse * cq + q_pulse * ci;
-  }
-  in (rf_i * output_gain), (rf_q * output_gain);
+};
+
 
 // ── Main process: 2 inputs → 2 outputs ───────────────────────────────────────
 process = qpsk_mod;

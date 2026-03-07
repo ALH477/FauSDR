@@ -82,7 +82,14 @@ prefilter(x)  = x : dc_block
 // Time constant ≈ 50 ms (suitable for 1200 baud — one frame = 53 ms).
 agc_tc     = 0.05;                                // 50 ms time constant
 agc_coeff  = exp(-1.0 / (agc_tc * ma.SR));
-peak_env(x) = (abs(x), _) ~ (\(s, p) -> max(s, p * agc_coeff));
+// peak_env: leaky peak follower via ~ feedback.
+// abs(x) is the new input each sample; prev peak is fed back and decayed.
+// peak_hold(new_in, prev_peak) = max(new_in, prev_peak * agc_coeff)
+// ~ feeds the single output (new_peak) back as the second input next sample.
+peak_env(x) = (abs(x), 0.0) : peak_hold ~ !
+with {
+    peak_hold(new_in, prev_peak) = max(new_in, prev_peak * agc_coeff);
+};
 agc(x)     = x / (peak_env(x) + 1e-6);
 
 // ── Stage 3: Dual bandpass filters ───────────────────────────────────────────

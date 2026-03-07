@@ -57,23 +57,30 @@ ki           = 4.0 * loop_bw * loop_bw;
 // NCO driven by accumulated frequency correction
 // phase accumulates at: base_phase + integral(freq_correction)
 // In Faust: use a recursive definition for the integrating VCO
-costas_loop(i_in, q_in) =
-  letrec {
-    // VCO phase in [0, 2π)
-    'vco_phase = (vco_phase + vco_freq) : ma.modulo(2.0 * ma.PI);
-    // VCO outputs
-    'vco_i     = cos(vco_phase);
-    'vco_q     = sin(vco_phase);
-    // Mix incoming signal with local VCO
-    'baseband_i = i_in * vco_i + q_in * vco_q;   // I arm (data)
-    'baseband_q = i_in * vco_q - q_in * vco_i;   // Q arm (error indicator)
-    // Phase error: I*Q — zero when locked (Q → 0), sign indicates direction
-    'phase_err  = baseband_i * baseband_q;
-    // Loop filter: proportional + integral
-    'freq_err_int = freq_err_int + ki * phase_err;          // integrator
-    'vco_freq  = kp * phase_err + freq_err_int;             // total correction
-  }
-  in baseband_i;  // I arm carries the demodulated data
+// BPSK Costas PLL — state-transition core.
+// Inputs:  (i_s, q_s, ph, fi)  — i/q signal + previous phase/fint
+// Outputs: (i_s, q_s, bi, ph_new, fi_new)  — state last so ~ feeds them back
+// No with{} binding references any other with{} binding — cycle-free.
+pll_core_bpsk(i_s, q_s, ph, fi) = i_s, q_s, bi, ph_new, fi_new
+with {
+    vi     = cos(ph);
+    vq     = sin(ph);
+    bi     = i_s * vi + q_s * vq;
+    bq     = i_s * vq - q_s * vi;
+    e      = bi * bq;
+    fi_new = fi + ki * e;
+    ph_new = (ph + kp * e + fi_new) : ma.modulo(2.0 * ma.PI);
+};
+
+// costas_loop: thread (i_in,q_in) through pll_core_bpsk feedback circuit.
+// ~ feeds last 2 outputs (ph_new,fi_new) back to last 2 inputs (ph,fi).
+// Pass-through outputs (i,q,bi): discard i,q; return bi.
+costas_loop(i_in, q_in) = bb_i
+with {
+    pll_out = (i_in, q_in) : pll_core_bpsk ~ (_, _);
+    bb_i    = pll_out : !, !, _, !, !;
+};
+  // I arm carries the demodulated data
 
 // ── Matched filter (63-tap RRC receive filter) ────────────────────────────────
 //
@@ -93,7 +100,7 @@ rrc35_coeffs = waveform {
   0.001919179, 0.006802846, -0.005085017, 0.000215126, 0.002395231, -0.001750678, -0.000109512,
   0.001068726, -0.000685631, -0.000143010, 0.000503715, -0.000269222, -0.000107568, 0.000231999,
   -0.000098284, -0.000064865, 0.000099169, -0.000030961, -0.000032618, 0.000037337, -0.000007479,
-  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499,
+  -0.000013271, 0.000011437, -0.000001013, -0.000003902, 0.000002364, 0.000000032, -0.000000499
 };
 
 rrc_coeff(n)    = rrc35_coeffs, int(n) : rdtable;
