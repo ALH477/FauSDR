@@ -15,7 +15,7 @@ demod/
 ├── arch/
 │   ├── soapy-sdr.cpp            # Standalone arch with main() (modulator.dsp only)
 │   └── soapy-sdr-lib.cpp        # Library arch, no main() (all modem DSP files)
-├── dsp/                         # Faust DSP modem library (10 files)
+├── dsp/                         # Faust DSP modem library (14 files)
 │   ├── modulator.dsp            # Autonomous BPSK-PM modulator (standalone C++ path)
 │   ├── qpsk_mod.dsp             # QPSK modulator  (2 bps, Gray-coded)
 │   ├── gmsk_mod.dsp             # GMSK modulator  (constant envelope, BT=0.3)
@@ -25,10 +25,15 @@ demod/
 │   ├── qpsk_demod.dsp           # QPSK demodulator (4-phase Costas + 63-tap RRC MF)
 │   ├── gmsk_demod.dsp           # GMSK demodulator (FM discriminator + Gaussian MF)
 │   ├── fsk_demod.dsp            # FSK demodulator  (phase-deriv or dual-filter)
-│   └── ask_demod.dsp            # OOK/ASK demodulator (envelope + adaptive slicer)
+│   ├── ask_demod.dsp            # OOK/ASK demodulator (envelope + adaptive slicer)
+│   ├── jack_mod.dsp             # Guitar-cable BPSK modulator  (4 kHz, sps=10/20)
+│   ├── jack_demod.dsp           # Guitar-cable BPSK demodulator
+│   ├── acoustic_fsk_mod.dsp     # Acoustic FSK modulator   (2/3 kHz, 1200 baud)
+│   └── acoustic_fsk_demod.dsp  # Acoustic FSK demodulator (dual-BPF energy detector)
 ├── transport/
 │   ├── demod_frame.h            # Legacy packed-struct header (compatibility)
-│   └── dcf_frame.h              # Canonical C99 codec (zero deps, embedded-safe)
+│   ├── dcf_frame.h              # Canonical C99 codec (zero deps, embedded-safe)
+│   └── jackframe.h              # 8-byte mini-frame for audio-band links (CRC pin 0xC23F)
 ├── src/
 │   ├── test_frame.cpp           # C++ frame unit tests
 │   └── test_conformance.cpp     # Cross-language conformance harness (C, CRC pin 0x42DD)
@@ -46,15 +51,22 @@ demod/
 │   │   ├── DCF/SDR/Device.hs    # TX handle (withSdrDevice) + RX handle (withSdrRxDevice)
 │   │   ├── DCF/Transport/Frame.hs
 │   │   ├── DCF/Transport/Symbol.hs
+│   │   ├── DCF/Transport/JackFrame.hs   # 8-byte mini-frame (CRC pin 0xC23F)
 │   │   ├── DCF/Modulator.hs     # TX pipeline
 │   │   ├── DCF/Demodulator.hs   # RX pipeline (SoapySDR RX → Faust → slicer → decoder)
-│   │   └── DCF/Modem/QPSK.hs   # Gray-coded QPSK symbol mapper / de-mapper
+│   │   └── DCF/Modem/
+│   │       ├── QPSK.hs          # Gray-coded QPSK symbol mapper / de-mapper
+│   │       ├── Wideband.hs      # Wideband BPSK modem (40–192 kHz, 40/96 kbaud)
+│   │       └── AcousticFSK.hs   # Acoustic FSK modem (2/3 kHz, 1200 baud, speaker+mic)
 │   ├── app/
 │   │   ├── Main.hs              # TX entry point (demod-sdr-hs)
-│   │   └── RxMain.hs            # RX entry point (demod-rx-hs)
+│   │   ├── RxMain.hs            # RX entry point (demod-rx-hs)
+│   │   ├── AcousticHelloTx.hs   # Acoustic TX REPL — type message, transmit over speaker
+│   │   └── AcousticHelloRx.hs   # Acoustic RX listener — decodes from mic, prints message
 │   ├── test/
 │   │   ├── Spec.hs
 │   │   ├── FrameSpec.hs
+│   │   ├── JackFrameSpec.hs     # JackFrame round-trip + CRC pin 0xC23F
 │   │   └── ConformanceSpec.hs   # Cross-language CRC pin + reference vector
 │   └── dsp/modulator_hs.dsp    # Faust TX DSP (63-tap RRC FIR, 1-in 2-out)
 │
@@ -156,11 +168,13 @@ demod/
 
 | Scheme | TX DSP | RX DSP | TX filter | RX filter |
 |--------|--------|--------|-----------|-----------|
-| BPSK | `modulator_hs.dsp` | `bpsk_demod.dsp` | 63-tap RRC FIR | 63-tap RRC MF |
+| BPSK (RF) | `modulator_hs.dsp` | `bpsk_demod.dsp` | 63-tap RRC FIR | 63-tap RRC MF |
 | QPSK | `qpsk_mod.dsp` | `qpsk_demod.dsp` | 63-tap RRC FIR | 63-tap RRC MF |
 | GMSK | `gmsk_mod.dsp` | `gmsk_demod.dsp` | 3× cascaded IIR | 3× cascaded IIR |
-| FSK | `fsk_mod.dsp` | `fsk_demod.dsp` | — (CP via phasor) | IIR lowpass |
+| FSK (RF) | `fsk_mod.dsp` | `fsk_demod.dsp` | — (CP via phasor) | IIR lowpass |
 | OOK/ASK | `ask_mod.dsp` | `ask_demod.dsp` | IIR RC shaping | Envelope + IIR |
+| BPSK (guitar cable) | `jack_mod.dsp` | `jack_demod.dsp` | 63/121-tap RRC | 63/121-tap RRC MF |
+| FSK (acoustic) | `acoustic_fsk_mod.dsp` | `acoustic_fsk_demod.dsp` | — (CP phasor) | Dual BPF + envelope |
 
 The BPSK and QPSK TX and RX filters are matched: both use the same 63-tap Kaiser-windowed RRC FIR (α=0.35, β=8.0), giving zero ISI at the correct sampling instants (raised-cosine end-to-end response).
 
@@ -188,6 +202,35 @@ The BPSK and QPSK TX and RX filters are matched: both use the same 63-tap Kaiser
 | CRC16 | CRC-CCITT poly `0x1021`, init `0xFFFF`, over bytes `[0..14]` |
 
 Valid iff `sync == 0xD3` **and** `crc16_ccitt(frame[0..14]) == frame[15..16]`.
+
+---
+
+## The 8-Byte JackFrame (Audio-Band Links)
+
+A stripped-down mini-frame for latency-critical point-to-point links over guitar cables or acoustic channels. No routing metadata — just payload and integrity check.
+
+```
+ 0       1       2-5       6-7
+┌───────┬───────┬──────────┬───────┐
+│ SYNC  │  HDR  │ PAYLOAD  │ CRC16 │
+│ 0xA5  │ssssttt│  4 bytes │ CCITT │
+└───────┴───────┴──────────┴───────┘
+  1 B     1 B      4 B       2 B
+```
+
+| Field | Description |
+|-------|-------------|
+| SYNC | `0xA5` — distinct from DCF `0xD3`, no ambiguity on mixed links |
+| HDR | `[7:4]` seq nibble (0–15 rolling) · `[3:0]` type (`0=DATA 1=ACK 2=BEACON 3=CTRL`) |
+| PAYLOAD | 4 bytes: `float32`, `uint32`, or `4×uint8` |
+| CRC16 | CRC-CCITT over bytes `[0..5]` |
+
+**Reference vector** — DATA, seq=0, payload=`DEADBEEF`:
+```
+Wire: A5 01 DE AD BE EF C2 3F    CRC pin: 0xC23F
+```
+
+Bridge to DCF: `jfToDCF` in `DCF.Transport.JackFrame` wraps the 4-byte payload into a full DCF DATA frame for forwarding into the wider network.
 
 ### Cross-Language Codec Parity
 
@@ -291,6 +334,42 @@ gcc -shared -fPIC -o libdcf_sdr_transport.so sdr_transport.c -lcjson -lpthread
 # demod-sdr-hs must be running to open the named pipes
 ```
 
+### Acoustic FSK Modem (speaker + microphone)
+
+Transmits JackFrame data as audible two-tone FSK. Sounds like a dial-up modem. Works between any two machines with a speaker and a microphone within ~50 cm.
+
+```bash
+cd haskell && nix develop
+
+# 1. Compile the acoustic DSP (once per change):
+faust -a ../arch/soapy-sdr-lib.cpp -lang c++ -vec -vs 256 \
+      dsp/acoustic_fsk_mod.dsp   -o build/acoustic_fsk_mod_gen.cpp
+faust -a ../arch/soapy-sdr-lib.cpp -lang c++ -vec -vs 256 \
+      dsp/acoustic_fsk_demod.dsp -o build/acoustic_fsk_demod_gen.cpp
+
+# 2. Build:
+cabal build acoustic-hello-tx acoustic-hello-rx
+
+# 3. Machine B — start listener first:
+cabal run acoustic-hello-rx
+
+# 4. Machine A — interactive TX prompt:
+cabal run acoustic-hello-tx
+# send> HELLO
+# send> DeMoD LLC
+# send>        ← empty line to quit
+```
+
+**Parameters:** mark=2000 Hz, space=3000 Hz, 1200 baud, 48 kHz SR, sps=40, frame=53.3 ms.
+See `acoustic_fsk_guide.docx` for full tuning, troubleshooting, and JACK/PipeWire routing.
+
+**Single-machine loopback test** (no second machine needed):
+```bash
+pactl load-module module-null-sink sink_name=loopback
+pactl load-module module-loopback source=loopback.monitor
+# run TX and RX in separate terminals — they talk through PipeWire
+```
+
 ---
 
 ## Faust DSP Parameters
@@ -362,7 +441,7 @@ ITransport* dcf_transport_create(void) {
 |-------|---------|----------|
 | Haskell full | `cd haskell && nix develop` | GHC 9.6, HLS, cabal, Faust, SoapySDR, GNURadio, inspectrum |
 | Haskell headless | `cd haskell && nix develop .#headless` | GHC, cabal, Faust, SoapySDR |
-| Modem dev | `cd haskell && nix develop .#modem-dev` | Headless + liquid-dsp, codec2, minimodem |
+| Modem dev | `cd haskell && nix develop .#modem-dev` | Headless + liquid-dsp, codec2, minimodem, sox, baudline |
 | C++ full | `nix develop` (root) | clang17, cmake, Faust, SoapySDR, GNURadio, inspectrum |
 | C++ headless | `nix develop .#headless` | clang17, cmake, Faust, SoapySDR |
 | Embedded | `nix develop .#embedded` | ARM cross-compiler, avr-gcc, openocd |
@@ -373,8 +452,8 @@ ITransport* dcf_transport_create(void) {
 
 | Language | Frame Codec | Plugin Manager | Transport | Redundancy | Status |
 |----------|-------------|---------------|-----------|------------|--------|
-| C | ✓ | ✓ dlopen/linked-list | ✓ UDP + SDR | ✓ Dijkstra | Complete |
-| Haskell | ✓ | — | ✓ SoapySDR TX/RX | — | TX + RX complete |
+| C | ✓ DCF + JackFrame | ✓ dlopen/linked-list | ✓ UDP + SDR | ✓ Dijkstra | Complete |
+| Haskell | ✓ DCF + JackFrame | — | ✓ SoapySDR TX/RX + Acoustic FSK | — | TX + RX + Acoustic complete |
 | Rust | ✓ no_std | ✓ traits/HashMap | stub | — | Frame + core complete |
 | Common Lisp | ✓ | ✓ CLOS/hash-table | ✓ UDP (HydraMesh) | — | Complete |
 | Python | — | ✓ ABC/importlib | ✓ TLV encode/decode | — | Core complete |
@@ -402,6 +481,9 @@ ITransport* dcf_transport_create(void) {
 - [ ] Rust transport plugin (`libdcf_udp_transport.so`)
 - [ ] GRC `.yml` block descriptor files for `dcf_frame_sink` and `dcf_frame_source`
 - [ ] Node.js frame codec
+- [ ] Wire `writeAudio` / `readAudio` stubs in `AcousticHelloTx` / `AcousticHelloRx` to JACK2 or PipeWire Simple API
+- [ ] `processChunked` stubs in `AcousticFSK.hs` wired to `DCF.Modulator.processChunk`
+- [ ] Jitter histogram demo (acoustic FSK interval log vs UDP ping comparison)
 
 ---
 
