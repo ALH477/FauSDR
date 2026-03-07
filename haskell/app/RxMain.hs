@@ -10,7 +10,6 @@
 
 module Main where
 
-import Control.Monad       (when)
 import Data.IORef          (newIORef, modifyIORef', readIORef)
 import Data.Word           (Word8)
 import System.Environment  (getArgs)
@@ -20,6 +19,9 @@ import Text.Printf         (printf)
 
 import DCF.Transport.Frame
 import DCF.Demodulator
+import DCF.Faust.DSP        (DspConfig (..))
+import DCF.SDR.Device       (SdrRxConfig (..))
+import DCF.Transport.Symbol (SymbolConfig (..))
 
 -- ── CLI ──────────────────────────────────────────────────────────────────────
 

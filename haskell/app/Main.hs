@@ -13,16 +13,18 @@
 
 module Main where
 
-import Control.Monad         (when)
 import Data.Bits             ((.&.), shiftR)
 import Data.IORef            (newIORef, readIORef, modifyIORef')
-import Data.Word             (Word8, Word16, Word32)
+import Data.Word             (Word32)
 import System.Environment    (getArgs)
 import System.Exit           (exitFailure)
 import Text.Read             (readMaybe)
 
 import DCF.Transport.Frame
 import DCF.Modulator
+import DCF.Faust.DSP       (DspConfig (..))
+import DCF.SDR.Device      (SdrConfig (..))
+import DCF.Transport.Symbol (SymbolConfig (..))
 
 -- ── CLI parsing ───────────────────────────────────────────────────────────────
 

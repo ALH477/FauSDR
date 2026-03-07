@@ -77,7 +77,21 @@ withDsp :: DspConfig -> (DspHandle -> IO a) -> IO a
 withDsp cfg action =
   bracket faustCreate faustDestroy $ \raw -> do
     when (raw == nullPtr) $
-      throwIO (ErrorCall "faust_dsp_create returned NULL")
+      throwIO $ ErrorCall $ unlines
+        [ "faust_dsp_create returned NULL — DSP stub is active."
+        , ""
+        , "The Faust DSP has not been compiled into this build."
+        , "Compile the required DSP file first, then rebuild:"
+        , ""
+        , "  nix develop"
+        , "  faust-bpsk-hs          # for demod-sdr-hs / demod-rx-hs"
+        , "  faust-acoustic-mod     # for acoustic-hello-tx"
+        , "  faust-acoustic-demod   # for acoustic-hello-rx"
+        , "  cabal build"
+        , ""
+        , "Or pass the generated path at compile time:"
+        , "  cxx-options: -DDEMOD_FAUST_GEN_CPP=\"path/to/modulator_hs_gen.cpp\""
+        ]
     faustInit raw (fromIntegral $ dspSampleRate cfg)
 
     ins  <- fromIntegral <$> faustNumInputs  raw
