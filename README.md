@@ -2,6 +2,8 @@
 
 **DeMoD LLC** · lGPL-3.0 · [info@demod.ltd](mailto:info@demod.ltd)
 
+![](./doc/demod_frame.mp4)
+
 Two codebases. One stack. A Haskell/Faust/SoapySDR RF TX/RX pipeline and a polyglot low-latency communications framework, sharing a custom 17-byte transport protocol at their boundary.
 
 ---
